@@ -1,8 +1,10 @@
 /**
  * Basic orchestration example.
  *
- * Uses the provider and model from your .env file.
- * No hardcoded API keys or model names.
+ * Delegates a simple dev task and shows:
+ * - Live progress output as agents work
+ * - Team tree with per-agent stats
+ * - CEO summary
  *
  * Usage:
  *   npx tsx examples/basic-orchestration.ts
@@ -10,35 +12,30 @@
 
 import { Swarm } from "../src/index.js";
 
+const CYAN = "\x1b[36m";
+const BOLD = "\x1b[1m";
+const DIM = "\x1b[2m";
+const RESET = "\x1b[0m";
+
 async function main() {
-  // Create a swarm — reads PROVIDER and MODEL from .env automatically
   const swarm = new Swarm({
-    name: "Small Dev Team",
-    costBudget: 1.0, // $1 max
+    name: "Dev Team",
+    costBudget: 2.0,
   });
 
   const config = swarm.getConfig();
-  console.log(`Provider: ${config.defaults.orchestratorModel.provider}`);
-  console.log(`Model: ${config.defaults.orchestratorModel.model}`);
-  console.log("Starting basic orchestration...\n");
+  console.log(`${DIM}Provider: ${config.defaults.orchestratorModel.provider}${RESET}`);
+  console.log(`${DIM}Model: ${config.defaults.orchestratorModel.model}${RESET}`);
 
   const result = await swarm.run(
     "Build a REST API endpoint that returns a paginated list of users. " +
       "Include input validation, error handling, and unit tests.",
   );
 
-  console.log("\n=== Orchestration Complete ===");
-  console.log(`Cycle ID: ${result.cycleId}`);
-  console.log(`Duration: ${(result.duration / 1000).toFixed(1)}s`);
-  console.log(`Total Cost: $${result.totalCost.toFixed(4)}`);
-  console.log(`Teams Involved: ${result.delegations.length}`);
-  console.log(`\n--- CEO Summary ---\n${result.companyStatus}`);
-
-  for (const delegation of result.delegations) {
-    console.log(`\n--- ${delegation.agentId} ---`);
-    console.log(`Status: ${delegation.success ? "OK" : "FAIL"}`);
-    console.log(`Cost: $${delegation.cost.total.toFixed(4)}`);
-    console.log(`Output:\n${delegation.output.slice(0, 500)}`);
+  // Print CEO summary
+  if (result.companyStatus && !result.companyStatus.startsWith("Orchestration")) {
+    console.log(`\n${CYAN}${BOLD}--- CEO Summary ---${RESET}\n`);
+    console.log(result.companyStatus);
   }
 }
 

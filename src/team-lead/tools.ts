@@ -6,13 +6,23 @@ import { Type } from "@mariozechner/pi-ai";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { ModelConfig, AgentResult, TeamId } from "../types.js";
 import { runWorker } from "../worker/worker.js";
+import type { WorkerRunOptions } from "../worker/worker.js";
 import { getTeamWorkerRoles, workerRoleToConfig } from "../worker/roles.js";
 import { createReport } from "../protocol/messages.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
+import type { CycleTracker } from "../ui/tracker.js";
+import type { ProgressLogger } from "../ui/progress.js";
 
 function text(t: string) {
   return { content: [{ type: "text" as const, text: t }], details: undefined };
+}
+
+export interface TeamLeadToolOptions {
+  costTracker: CostTracker;
+  cycleTracker?: CycleTracker;
+  progress?: ProgressLogger;
+  leadId: string;
 }
 
 /**
@@ -22,19 +32,17 @@ export function createTeamLeadToolDefinitions(
   teamId: TeamId,
   leadId: string,
   workerModel: ModelConfig,
-  costTracker: CostTracker,
+  opts: TeamLeadToolOptions,
 ): AgentTool<any, any>[] {
+  const { costTracker, cycleTracker, progress } = opts;
   const workerResults: AgentResult[] = [];
 
   const spawnWorkerTool: AgentTool<any, any> = {
     name: "spawn_worker",
     label: "Spawn Worker",
-    description:
-      "Spawn an ephemeral worker agent. Choose the appropriate worker role for the task.",
+    description: "Spawn an ephemeral worker agent. Choose the appropriate worker role for the task.",
     parameters: Type.Object({
-      workerId: Type.String({
-        description: "Worker role ID (e.g., 'frontend-eng', 'backend-eng', 'qa-eng')",
-      }),
+      workerId: Type.String({ description: "Worker role ID (e.g., 'frontend-eng', 'backend-eng', 'qa-eng')" }),
       task: Type.String({ description: "The specific task for the worker" }),
       context: Type.Optional(Type.String({ description: "Additional context" })),
     }),
@@ -48,9 +56,17 @@ export function createTeamLeadToolDefinitions(
       }
 
       const config = workerRoleToConfig(role, workerModel);
+      progress?.spawning(leadId, role.name);
       logger.info(leadId, "spawning_worker", { workerId: args.workerId, task: args.task });
 
-      const result = await runWorker(config, args.task, args.context, costTracker);
+      const workerOpts: WorkerRunOptions = {
+        costTracker,
+        cycleTracker,
+        progress,
+        parentId: leadId,
+      };
+
+      const result = await runWorker(config, args.task, args.context, workerOpts);
       workerResults.push(result);
 
       return text(
@@ -81,7 +97,7 @@ export function createTeamLeadToolDefinitions(
       body: Type.String({ description: "Detailed report" }),
     }),
     execute: async (_id: string, args: { summary: string; body: string }) => {
-      const msg = createReport(leadId, "orchestrator", args.summary, args.body, "");
+      createReport(leadId, "orchestrator", args.summary, args.body, "");
       logger.info(leadId, "report_sent", { summary: args.summary });
       return text(`Report sent: ${args.summary}`);
     },

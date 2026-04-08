@@ -1,10 +1,8 @@
 /**
- * Full company simulation example.
+ * Full company simulation.
  *
- * Spins up the complete 5-team hierarchy with all 21 worker roles.
- * The CEO delegates quarterly OKRs, and all teams execute in parallel.
- *
- * Uses the provider and model from your .env file.
+ * Engages all 5 teams on quarterly planning.
+ * Shows the full team tree with 5 leads + workers.
  *
  * Usage:
  *   npx tsx examples/full-company.ts
@@ -12,45 +10,39 @@
 
 import { Swarm } from "../src/index.js";
 
+const CYAN = "\x1b[36m";
+const BOLD = "\x1b[1m";
+const DIM = "\x1b[2m";
+const RESET = "\x1b[0m";
+
 async function main() {
-  // Full company with all default teams — reads from .env
   const swarm = new Swarm({
     name: "Acme Corp",
     costBudget: 5.0,
   });
 
   const config = swarm.getConfig();
-  console.log(`Provider: ${config.defaults.orchestratorModel.provider}`);
-  console.log(`Model: ${config.defaults.orchestratorModel.model}`);
-  console.log("=== Acme Corp — Q2 Planning Cycle ===\n");
+  const teamCount = Object.keys(config.teams).length;
+  const workerCount = Object.values(config.teams).reduce((sum, t) => sum + t.workers.length, 0);
+  console.log(`${DIM}${teamCount} teams, ${workerCount} workers${RESET}`);
+  console.log(`${DIM}Model: ${config.defaults.orchestratorModel.model}${RESET}`);
 
   const result = await swarm.run(
-    `It's the beginning of Q2. As CEO, kick off quarterly planning:
+    `Kick off Q2 planning across all teams:
 
-1. Ask the product team (CPO) to define the top 3 product priorities for Q2
-2. Ask the dev team (CTO) to estimate capacity and identify technical debt to address
-3. Ask marketing (CMO) to plan the Q2 campaign calendar
-4. Ask ops (COO) to review budget allocation and headcount plan
-5. Ask GTM (CRO) to set revenue targets and identify top pipeline opportunities
+1. Product (CPO): Define the top 3 product priorities for Q2
+2. Engineering (CTO): Estimate capacity and identify tech debt
+3. Marketing (CMO): Plan the Q2 campaign calendar
+4. Operations (COO): Review budget allocation and headcount
+5. GTM (CRO): Set revenue targets and top pipeline opportunities
 
-Each team should produce a detailed plan with specific deliverables and timelines.`,
-    "Company context: Series B startup, 50 employees, $10M ARR, B2B SaaS product.",
+Each team should produce deliverables with timelines.`,
+    "Series B startup, 50 employees, $10M ARR, B2B SaaS.",
   );
 
-  console.log("\n" + "=".repeat(60));
-  console.log("ORCHESTRATION COMPLETE");
-  console.log("=".repeat(60));
-  console.log(`Duration: ${(result.duration / 1000).toFixed(1)}s`);
-  console.log(`Total Cost: $${result.totalCost.toFixed(4)}`);
-  console.log(`Teams Involved: ${result.delegations.length}`);
-
-  console.log("\n--- CEO Summary ---");
-  console.log(result.companyStatus);
-
-  for (const d of result.delegations) {
-    console.log(`\n${"—".repeat(40)}`);
-    console.log(`Team: ${d.agentId} | ${d.success ? "OK" : "FAIL"} | $${d.cost.total.toFixed(4)}`);
-    console.log(d.output);
+  if (result.companyStatus && !result.companyStatus.startsWith("Orchestration")) {
+    console.log(`\n${CYAN}${BOLD}--- CEO Summary ---${RESET}\n`);
+    console.log(result.companyStatus);
   }
 }
 

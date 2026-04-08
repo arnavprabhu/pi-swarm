@@ -20,6 +20,11 @@ export class Logger {
     this.minLevel = minLevel;
   }
 
+  /** Get the current minimum log level. */
+  getLevel(): LogLevel {
+    return this.minLevel;
+  }
+
   /** Set the minimum log level. */
   setLevel(level: LogLevel): void {
     this.minLevel = level;

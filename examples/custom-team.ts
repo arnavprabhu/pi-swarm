@@ -1,11 +1,8 @@
 /**
- * Custom team definition example.
+ * Custom team example.
  *
- * Shows how to create a swarm with entirely custom teams,
- * roles, and model assignments — not limited to the built-in
- * company structure.
- *
- * Uses the provider and model from your .env file for all agents.
+ * Defines a research + design studio with custom roles.
+ * Demonstrates that pi-swarm isn't limited to the built-in teams.
  *
  * Usage:
  *   npx tsx examples/custom-team.ts
@@ -14,122 +11,74 @@
 import { Swarm, envModelConfig } from "../src/index.js";
 import type { SwarmConfig, TeamConfig } from "../src/types.js";
 
-// Read model config from .env
+const CYAN = "\x1b[36m";
+const BOLD = "\x1b[1m";
+const DIM = "\x1b[2m";
+const RESET = "\x1b[0m";
+
 const model = envModelConfig();
 
-// Define custom teams
 const researchTeam: TeamConfig = {
   lead: {
-    id: "research-director",
-    name: "Research Director",
-    tier: "team-lead",
-    team: "research",
-    role: "research_director",
-    systemPrompt:
-      "You are the Research Director. You lead a team of research specialists. " +
-      "You decompose research questions, delegate to analysts, and synthesize findings " +
-      "into actionable insights.",
-    model,
-    maxTurns: 8,
+    id: "research-director", name: "Research Director", tier: "team-lead",
+    team: "research", role: "research_director", model, maxTurns: 8,
+    systemPrompt: "You are the Research Director. Decompose research questions, delegate to analysts, and synthesize findings into actionable insights.",
   },
   workers: [
     {
-      id: "market-researcher",
-      name: "Market Researcher",
-      tier: "worker",
-      team: "research",
-      role: "market_researcher",
-      systemPrompt:
-        "You are a market researcher. You analyze market trends, competitor landscapes, " +
-        "TAM/SAM/SOM, and produce data-driven market analyses.",
-      model,
-      maxTurns: 3,
+      id: "market-researcher", name: "Market Researcher", tier: "worker",
+      team: "research", role: "market_researcher", model, maxTurns: 3,
+      systemPrompt: "You are a market researcher. Analyze trends, competitor landscapes, and produce data-driven analyses.",
     },
     {
-      id: "academic-researcher",
-      name: "Academic Researcher",
-      tier: "worker",
-      team: "research",
-      role: "academic_researcher",
-      systemPrompt:
-        "You are an academic researcher. You review literature, summarize papers, " +
-        "identify key findings, and evaluate research methodologies.",
-      model,
-      maxTurns: 3,
+      id: "academic-researcher", name: "Academic Researcher", tier: "worker",
+      team: "research", role: "academic_researcher", model, maxTurns: 3,
+      systemPrompt: "You are an academic researcher. Review literature, summarize papers, and evaluate methodologies.",
     },
   ],
 };
 
 const designTeam: TeamConfig = {
   lead: {
-    id: "design-director",
-    name: "Design Director",
-    tier: "team-lead",
-    team: "design",
-    role: "design_director",
-    systemPrompt:
-      "You are the Design Director. You lead a team of designers. " +
-      "You create design strategies, delegate specific design tasks, and ensure " +
-      "visual consistency and quality across all deliverables.",
-    model,
-    maxTurns: 8,
+    id: "design-director", name: "Design Director", tier: "team-lead",
+    team: "design", role: "design_director", model, maxTurns: 8,
+    systemPrompt: "You are the Design Director. Create design strategies, delegate tasks, and ensure visual quality.",
   },
   workers: [
     {
-      id: "ui-designer",
-      name: "UI Designer",
-      tier: "worker",
-      team: "design",
-      role: "ui_designer",
-      systemPrompt:
-        "You are a UI designer. You create interface mockups, component designs, " +
-        "and interaction specifications with attention to usability and aesthetics.",
-      model,
-      maxTurns: 3,
+      id: "ui-designer", name: "UI Designer", tier: "worker",
+      team: "design", role: "ui_designer", model, maxTurns: 3,
+      systemPrompt: "You are a UI designer. Create interface mockups and interaction specifications.",
     },
   ],
 };
 
-// Build the full config
 const customConfig: SwarmConfig = {
   name: "Research & Design Studio",
   orchestrator: {
-    id: "studio-lead",
-    name: "Studio Lead",
-    tier: "orchestrator",
-    role: "studio_lead",
-    systemPrompt: "", // Built dynamically by the orchestrator
-    model,
-    maxTurns: 15,
+    id: "studio-lead", name: "Studio Lead", tier: "orchestrator",
+    role: "studio_lead", systemPrompt: "", model, maxTurns: 15,
   },
-  teams: {
-    research: researchTeam,
-    design: designTeam,
-  },
-  defaults: {
-    orchestratorModel: model,
-    teamLeadModel: model,
-    workerModel: model,
-  },
+  teams: { research: researchTeam, design: designTeam },
+  defaults: { orchestratorModel: model, teamLeadModel: model, workerModel: model },
   costBudget: 2.0,
 };
 
 async function main() {
   const swarm = new Swarm({ config: customConfig });
 
-  console.log(`Provider: ${model.provider}`);
-  console.log(`Model: ${model.model}`);
-  console.log("=== Custom Team: Research & Design Studio ===\n");
+  console.log(`${DIM}Custom teams: research (2 workers), design (1 worker)${RESET}`);
+  console.log(`${DIM}Model: ${model.model}${RESET}`);
 
   const result = await swarm.run(
-    "Research the current state of AI-powered design tools and create a competitive analysis " +
-      "with recommendations for which tools our team should adopt.",
+    "Research the current state of AI-powered design tools and create a competitive " +
+      "analysis with recommendations for which tools our team should adopt.",
   );
 
-  console.log("\n=== Complete ===");
-  console.log(`Duration: ${(result.duration / 1000).toFixed(1)}s`);
-  console.log(`Cost: $${result.totalCost.toFixed(4)}`);
-  console.log(`\n${result.companyStatus}`);
+  if (result.companyStatus && !result.companyStatus.startsWith("Orchestration")) {
+    console.log(`\n${CYAN}${BOLD}--- Studio Lead Summary ---${RESET}\n`);
+    console.log(result.companyStatus);
+  }
 }
 
 main().catch(console.error);

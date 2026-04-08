@@ -79,6 +79,13 @@ export { resolveApiKey, envModelConfig, ENV_PROVIDER, ENV_MODEL } from "./env.js
 export { createSwarmAgent, runOneShot } from "./session.js";
 export type { SwarmAgentOptions } from "./session.js";
 
+// UI
+export { CycleTracker, ProgressLogger, renderTree, printTree } from "./ui/index.js";
+export type { TrackedAgent } from "./ui/index.js";
+
+// Orchestration options
+export type { OrchestrationOptions } from "./orchestrator/orchestrator.js";
+
 // ---------------------------------------------------------------------------
 // Swarm — High-level convenience class
 // ---------------------------------------------------------------------------
@@ -87,6 +94,7 @@ import type { CycleResult, SwarmConfig, ModelConfig } from "./types.js";
 import { createDefaultConfig } from "./config.js";
 import { runOrchestrationCycle } from "./orchestrator/orchestrator.js";
 import { envModelConfig } from "./env.js";
+import type { OrchestrationOptions } from "./orchestrator/orchestrator.js";
 
 export interface SwarmOptions {
   /** Name for this swarm. Default: "Pi Swarm" */
@@ -135,7 +143,7 @@ export class Swarm {
   }
 
   /** Run a full orchestration cycle. */
-  async run(directive: string, context?: string): Promise<CycleResult> {
-    return runOrchestrationCycle(this.config, directive, context);
+  async run(directive: string, context?: string, uiOpts?: OrchestrationOptions): Promise<CycleResult> {
+    return runOrchestrationCycle(this.config, directive, context, uiOpts);
   }
 }

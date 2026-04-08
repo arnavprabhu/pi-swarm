@@ -1,14 +1,20 @@
 /**
  * Ephemeral worker agent factory.
- *
- * Workers use a lightweight pi-authenticated Agent (no session overhead).
- * They receive a task, execute it, and return text output.
  */
 
 import type { AgentConfig, AgentResult } from "../types.js";
 import { runOneShot } from "../session.js";
 import { logger } from "../utils/logger.js";
 import { CostTracker } from "../utils/cost-tracker.js";
+import type { CycleTracker } from "../ui/tracker.js";
+import type { ProgressLogger } from "../ui/progress.js";
+
+export interface WorkerRunOptions {
+  costTracker?: CostTracker;
+  cycleTracker?: CycleTracker;
+  progress?: ProgressLogger;
+  parentId?: string;
+}
 
 /**
  * Run an ephemeral worker agent.
@@ -17,9 +23,18 @@ export async function runWorker(
   config: AgentConfig,
   task: string,
   context?: string,
-  costTracker?: CostTracker,
+  opts?: WorkerRunOptions,
 ): Promise<AgentResult> {
   const startTime = Date.now();
+  const { costTracker, cycleTracker, progress, parentId } = opts ?? {};
+
+  // Register in cycle tracker
+  cycleTracker?.register(
+    config.id, config.name, "worker",
+    `${config.model.provider}/${config.model.model}`.replace(/.*\//, ""),
+    config.team, parentId,
+  );
+  cycleTracker?.working(config.id);
 
   logger.info(config.id, "worker_spawned", { name: config.name, role: config.role });
 
@@ -33,7 +48,7 @@ export async function runWorker(
       systemPrompt,
       model: config.model,
       thinkingLevel: config.model.thinkingLevel ?? "off",
-      tools: [], // Workers are text-only
+      tools: [],
     },
     task,
   );
@@ -44,9 +59,9 @@ export async function runWorker(
     const outputTokens = Math.ceil(result.text.length / 4);
     const inputTokens = Math.ceil((systemPrompt.length + task.length) / 4);
 
-    if (costTracker) {
-      costTracker.record(config.id, inputTokens, outputTokens, 0);
-    }
+    costTracker?.record(config.id, inputTokens, outputTokens, 0);
+    cycleTracker?.complete(config.id, { duration, outputLength: result.text.length });
+    progress?.complete(config.name, "worker", duration, `${result.text.length} chars`);
 
     logger.info(config.id, "worker_completed", { duration, outputLength: result.text.length });
 
@@ -60,6 +75,9 @@ export async function runWorker(
       toolCalls: [],
     };
   } else {
+    cycleTracker?.error(config.id, result.error ?? "Unknown error");
+    progress?.failed(config.name, "worker", result.error ?? "Unknown error");
+
     logger.error(config.id, "worker_failed", { error: result.error, duration });
 
     return {

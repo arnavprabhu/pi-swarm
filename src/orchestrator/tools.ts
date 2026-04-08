@@ -6,18 +6,28 @@ import { Type } from "@mariozechner/pi-ai";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { AgentResult, SwarmConfig, TeamId } from "../types.js";
 import { runTeamLead } from "../team-lead/team-lead.js";
+import type { TeamLeadRunOptions } from "../team-lead/team-lead.js";
 import { getTeamLeadRole, teamLeadRoleToConfig } from "../team-lead/roles.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
+import type { CycleTracker } from "../ui/tracker.js";
+import type { ProgressLogger } from "../ui/progress.js";
 
 function text(t: string) {
   return { content: [{ type: "text" as const, text: t }], details: undefined };
 }
 
-/**
- * Create AgentTool[] for the orchestrator.
- */
-export function createOrchestratorToolDefinitions(config: SwarmConfig, costTracker: CostTracker) {
+export interface OrchestratorToolOptions {
+  costTracker: CostTracker;
+  cycleTracker?: CycleTracker;
+  progress?: ProgressLogger;
+}
+
+export function createOrchestratorToolDefinitions(
+  config: SwarmConfig,
+  opts: OrchestratorToolOptions,
+) {
+  const { costTracker, cycleTracker, progress } = opts;
   const delegationResults: Map<string, AgentResult> = new Map();
 
   const delegateTaskTool: AgentTool<any, any> = {
@@ -43,9 +53,17 @@ export function createOrchestratorToolDefinitions(config: SwarmConfig, costTrack
 
       if (costTracker.isOverBudget) return text(`Error: Budget exceeded`);
 
+      progress?.delegating("Orchestrator", leadConfig.name, teamId);
       logger.info("orchestrator", "delegating_task", { team: teamId, task: args.task, priority: args.priority ?? "p2" });
 
-      const result = await runTeamLead(leadConfig, args.task, args.context, config.defaults.workerModel, costTracker);
+      const leadOpts: TeamLeadRunOptions = {
+        costTracker,
+        cycleTracker,
+        progress,
+        parentId: "orchestrator",
+      };
+
+      const result = await runTeamLead(leadConfig, args.task, args.context, config.defaults.workerModel, leadOpts);
       delegationResults.set(teamId, result);
 
       return text(
@@ -76,19 +94,19 @@ export function createOrchestratorToolDefinitions(config: SwarmConfig, costTrack
           if (!role) return { team: teamId, error: `Not found` };
           lc = teamLeadRoleToConfig(role, config.defaults.teamLeadModel);
         }
-        const result = await runTeamLead(lc, args.task, args.context, config.defaults.workerModel, costTracker);
+        progress?.delegating("Orchestrator", lc.name, teamId);
+        const leadOpts: TeamLeadRunOptions = { costTracker, cycleTracker, progress, parentId: "orchestrator" };
+        const result = await runTeamLead(lc, args.task, args.context, config.defaults.workerModel, leadOpts);
         delegationResults.set(teamId, result);
         return { team: teamId, result };
       });
 
       const results = await Promise.all(promises);
-      const t = results
-        .map((r) => {
-          if ("error" in r && !("result" in r)) return `[${r.team}] Error: ${r.error}`;
-          const res = r.result!;
-          return `[${r.team}] ${res.success ? "OK" : "FAIL"}: ${res.output.slice(0, 300)}`;
-        })
-        .join("\n\n---\n\n");
+      const t = results.map((r) => {
+        if ("error" in r && !("result" in r)) return `[${r.team}] Error: ${r.error}`;
+        const res = r.result!;
+        return `[${r.team}] ${res.success ? "OK" : "FAIL"}: ${res.output.slice(0, 300)}`;
+      }).join("\n\n---\n\n");
       return text(t);
     },
   };
@@ -121,7 +139,6 @@ export function createOrchestratorToolDefinitions(config: SwarmConfig, costTrack
         "# Cycle Complete",
         `\n## Summary\n${args.summary}`,
         args.nextSteps ? `\n## Next Steps\n${args.nextSteps}` : "",
-        `\n## Cost\n${costTracker.summary()}`,
       ].join("\n"));
     },
   };
