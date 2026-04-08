@@ -125,12 +125,12 @@ export class Swarm {
     if (options?.config) {
       this.config = options.config;
     } else {
-      // Use env defaults (from .env file) when no model config is provided
+      // Use env defaults if available, otherwise let pi auth resolve at runtime
       const defaultModel = envModelConfig();
       this.config = createDefaultConfig(options?.name, {
-        orchestratorModel: options?.orchestratorModel ?? defaultModel,
-        teamLeadModel: options?.teamLeadModel ?? defaultModel,
-        workerModel: options?.workerModel ?? defaultModel,
+        orchestratorModel: options?.orchestratorModel ?? defaultModel ?? undefined,
+        teamLeadModel: options?.teamLeadModel ?? defaultModel ?? undefined,
+        workerModel: options?.workerModel ?? defaultModel ?? undefined,
         costBudget: options?.costBudget,
         maxConcurrentAgents: options?.maxConcurrentAgents,
       });

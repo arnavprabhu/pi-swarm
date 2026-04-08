@@ -30,22 +30,17 @@ export function resolveApiKey(provider: string): string | undefined {
 
 /**
  * Build a ModelConfig from environment variables.
- * Optionally override provider/model for a specific tier.
- * Throws if PROVIDER/MODEL are not set and no overrides given.
+ * Returns undefined if PROVIDER/MODEL are not set (pi auth handles it).
  */
 export function envModelConfig(
   providerOverride?: string,
   modelOverride?: string,
-): ModelConfig {
+): ModelConfig | undefined {
   const provider = providerOverride ?? ENV_PROVIDER;
   const model = modelOverride ?? ENV_MODEL;
 
   if (!provider || !model) {
-    throw new Error(
-      "No model configured. Set PROVIDER and MODEL in your .env file.\n" +
-      "Example:\n  PROVIDER=google\n  MODEL=gemini-2.5-flash\n  GEMINI_API_KEY=your-key\n\n" +
-      "Or authenticate via pi: pi /login",
-    );
+    return undefined;
   }
 
   return {
