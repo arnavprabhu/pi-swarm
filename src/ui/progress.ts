@@ -24,6 +24,39 @@ const RED = "\x1b[31m";
 
 type AgentTierHint = "orchestrator" | "team-lead" | "worker";
 
+/** Extract a clean error message from potentially nested JSON error strings. */
+function extractErrorMessage(error: string): string {
+  // Try to find a human-readable message in nested JSON
+  try {
+    // Common pattern: {"error":{"message":"{\n  \"error\": {\n    \"message\": \"...\"}}"
+    const match = error.match(/"message"\s*:\s*"([^"]*(?:high demand|UNAVAILABLE|rate limit|quota|timeout)[^"]*)"/i);
+    if (match) {
+      // Clean up escaped newlines and quotes
+      return match[1].replace(/\\n/g, " ").replace(/\\"/g, '"').trim().slice(0, 100);
+    }
+    // Try parsing as JSON
+    const parsed = JSON.parse(error);
+    if (parsed?.error?.message) {
+      const inner = parsed.error.message;
+      if (typeof inner === "string" && inner.startsWith("{")) {
+        try {
+          const innerParsed = JSON.parse(inner);
+          return innerParsed?.error?.message?.slice(0, 100) ?? inner.slice(0, 100);
+        } catch { return inner.slice(0, 100); }
+      }
+      return String(inner).slice(0, 100);
+    }
+  } catch {
+    // Not JSON, use as-is
+  }
+  // Truncate plain string errors
+  if (error.startsWith("got status:")) {
+    const msgMatch = error.match(/"message":"([^"]+)"/);
+    if (msgMatch) return msgMatch[1].slice(0, 100);
+  }
+  return error.length > 100 ? error.slice(0, 97) + "..." : error;
+}
+
 function tierColor(tier: AgentTierHint): string {
   switch (tier) {
     case "orchestrator": return CYAN;
@@ -82,9 +115,9 @@ export class ProgressLogger {
     if (!this.enabled) return;
     const indent = tierIndent(tier);
     const color = tierColor(tier);
-    // Truncate long error messages
-    const shortError = error.length > 80 ? error.slice(0, 77) + "..." : error;
-    console.log(`${indent}${color}[${name}]${RESET} ${RED}✗${RESET} ${RED}Failed: ${shortError}${RESET}`);
+    // Extract a human-readable error from nested JSON
+    const cleanError = extractErrorMessage(error);
+    console.log(`${indent}${color}[${name}]${RESET} ${RED}✗${RESET} ${RED}${cleanError}${RESET}`);
   }
 
   /** Log cycle start. */

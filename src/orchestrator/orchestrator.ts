@@ -69,10 +69,10 @@ export async function runOrchestrationCycle(
   const suppressLogger = uiOpts?.suppressLogger ?? showProgress;
 
   // Fully suppress JSONL logger when progress UI is active
-  // (errors are shown via the ProgressLogger instead)
-  const prevLogLevel = suppressLogger ? logger.getLevel() : null;
+  // (errors are shown via the ProgressLogger's colored format instead)
+  const prevLogLevel = logger.getLevel();
   if (suppressLogger) {
-    logger.setLevel("error");
+    logger.setEnabled(false);
   }
 
   // Create UI components
@@ -120,12 +120,16 @@ export async function runOrchestrationCycle(
       if (lastMsg.stopReason === "error") error = lastMsg.errorMessage ?? "Unknown error";
     }
 
-    if (error) logger.error("orchestrator", "orchestrator_error", { error });
+    if (error) {
+      // Show via progress logger (colored) instead of raw JSONL
+      progress.failed("Orchestrator", "orchestrator", error);
+      cycleTracker.error("orchestrator", error);
+    }
 
     const delegations = Array.from(getDelegationResults().values());
     const duration = Date.now() - startTime;
 
-    cycleTracker.complete("orchestrator", { duration });
+    if (!error) cycleTracker.complete("orchestrator", { duration });
     progress.cycleEnd(duration, delegations.length);
 
     // Print the team tree
@@ -133,14 +137,15 @@ export async function runOrchestrationCycle(
       printTree(cycleTracker);
     }
 
-    // Restore logger level
-    if (suppressLogger) {
-      logger.setLevel("info");
-    }
-
     logger.info("orchestrator", "cycle_completed", {
       cycleId, duration, totalCost: costTracker.totalCost, teamsInvolved: delegations.length,
     });
+
+    // Restore logger after our final log
+    if (suppressLogger) {
+      logger.setEnabled(true);
+      logger.setLevel(prevLogLevel);
+    }
 
     return {
       cycleId,
@@ -158,7 +163,10 @@ export async function runOrchestrationCycle(
     progress.failed("Orchestrator", "orchestrator", errorMessage);
 
     if (showTree) printTree(cycleTracker);
-    if (suppressLogger) logger.setLevel("info");
+    if (suppressLogger) {
+      logger.setEnabled(true);
+      logger.setLevel(prevLogLevel);
+    }
 
     logger.error("orchestrator", "cycle_failed", { cycleId, error: errorMessage });
 

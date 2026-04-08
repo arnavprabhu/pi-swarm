@@ -15,9 +15,15 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
 export class Logger {
   private minLevel: LogLevel;
   private entries: LogEntry[] = [];
+  private enabled: boolean = true;
 
   constructor(minLevel: LogLevel = "info") {
     this.minLevel = minLevel;
+  }
+
+  /** Enable or disable all logging output. */
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
   }
 
   /** Get the current minimum log level. */
@@ -68,6 +74,7 @@ export class Logger {
   // ---
 
   private log(level: LogLevel, agentId: string, event: string, data?: unknown): void {
+    if (!this.enabled) return;
     if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[this.minLevel]) return;
 
     const entry: LogEntry = {
