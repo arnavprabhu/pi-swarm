@@ -8,14 +8,45 @@
  */
 
 import { Type } from "@mariozechner/pi-ai";
+import type { KnownProvider, Model } from "@mariozechner/pi-ai";
 import { defineTool } from "@mariozechner/pi-coding-agent";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { runOrchestrationCycle } from "./orchestrator/orchestrator.js";
 import { createDefaultConfig } from "./config.js";
-import type { SwarmConfig } from "./types.js";
+import type { SwarmConfig, ModelConfig } from "./types.js";
 
-let currentConfig: SwarmConfig = createDefaultConfig();
+let cachedConfig: SwarmConfig | null = null;
 let lastCycleResult: string | null = null;
+
+/**
+ * Build a ModelConfig from pi's current model.
+ * Called at execution time (not import time) so it picks up
+ * whatever model the user has selected via pi /model.
+ */
+function modelFromPi(piModel: Model<any> | undefined): ModelConfig | undefined {
+  if (!piModel) return undefined;
+  return {
+    provider: piModel.provider as KnownProvider,
+    model: piModel.id,
+  };
+}
+
+/**
+ * Get or create the swarm config, using pi's current model.
+ */
+function getConfig(piModel: Model<any> | undefined): SwarmConfig {
+  const mc = modelFromPi(piModel);
+
+  // Rebuild config if model changed or first call
+  if (!cachedConfig || (mc && cachedConfig.defaults.orchestratorModel.model !== mc.model)) {
+    cachedConfig = createDefaultConfig("Pi Swarm", {
+      orchestratorModel: mc,
+      teamLeadModel: mc,
+      workerModel: mc,
+    });
+  }
+  return cachedConfig;
+}
 
 export default function piSwarmExtension(pi: ExtensionAPI): void {
   // ----- Tool: swarm_delegate -----
@@ -31,12 +62,14 @@ export default function piSwarmExtension(pi: ExtensionAPI): void {
         context: Type.Optional(Type.String({ description: "Additional context or constraints" })),
         budget: Type.Optional(Type.Number({ description: "Maximum cost budget in dollars" })),
       }),
-      execute: async (_toolCallId, args) => {
+      execute: async (_toolCallId, args, _signal, _onUpdate, ctx) => {
+        // ctx is the ExtensionContext — read pi's current model from it
+        const config = getConfig(ctx?.model);
         if (args.budget !== undefined) {
-          currentConfig.costBudget = args.budget;
+          config.costBudget = args.budget;
         }
 
-        const result = await runOrchestrationCycle(currentConfig, args.task, args.context);
+        const result = await runOrchestrationCycle(config, args.task, args.context);
         lastCycleResult = JSON.stringify(result, null, 2);
 
         const summary = [
@@ -70,12 +103,13 @@ export default function piSwarmExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      ctx.ui.notify("Starting swarm orchestration...", "info");
+      // Read pi's current model from the command context
+      const config = getConfig(ctx.model);
+      ctx.ui.notify(`Swarm starting with ${config.defaults.orchestratorModel.model}...`, "info");
 
-      const result = await runOrchestrationCycle(currentConfig, args.trim());
+      const result = await runOrchestrationCycle(config, args.trim());
       lastCycleResult = JSON.stringify(result, null, 2);
 
-      // Feed the result back to the agent as a user message
       pi.sendUserMessage(
         `Swarm orchestration complete (${(result.duration / 1000).toFixed(1)}s, ${result.delegations.length} teams):\n\n${result.companyStatus}`,
       );
@@ -86,20 +120,18 @@ export default function piSwarmExtension(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-config", {
     description: "Show swarm configuration",
     handler: async (_args, ctx) => {
-      const teams = Object.entries(currentConfig.teams)
+      const config = getConfig(ctx.model);
+      const teams = Object.entries(config.teams)
         .map(([id, t]) => `  ${id}: ${t.lead.name} + ${t.workers.length} workers`)
         .join("\n");
 
-      const info = [
-        `Swarm: ${currentConfig.name}`,
-        `Orchestrator: ${currentConfig.defaults.orchestratorModel.provider}/${currentConfig.defaults.orchestratorModel.model}`,
-        `Team leads: ${currentConfig.defaults.teamLeadModel.provider}/${currentConfig.defaults.teamLeadModel.model}`,
-        `Workers: ${currentConfig.defaults.workerModel.provider}/${currentConfig.defaults.workerModel.model}`,
-        `Budget: ${currentConfig.costBudget ? `$${currentConfig.costBudget.toFixed(2)}` : "unlimited"}`,
+      ctx.ui.notify(
+        `Swarm: ${config.name}\n` +
+        `Model: ${config.defaults.orchestratorModel.provider}/${config.defaults.orchestratorModel.model}\n` +
+        `Budget: ${config.costBudget ? `$${config.costBudget.toFixed(2)}` : "unlimited"}\n` +
         `Teams:\n${teams}`,
-      ].join("\n");
-
-      ctx.ui.notify(info, "info");
+        "info",
+      );
     },
   });
 
@@ -114,11 +146,13 @@ export default function piSwarmExtension(pi: ExtensionAPI): void {
       try {
         const parsed = JSON.parse(lastCycleResult);
         ctx.ui.notify(
-          `Last cycle: ${parsed.cycleId}\nDuration: ${(parsed.duration / 1000).toFixed(1)}s\nTeams: ${parsed.delegations?.length ?? 0}\n\n${parsed.companyStatus?.slice(0, 500) ?? "No summary"}`,
+          `Last cycle: ${parsed.cycleId}\n` +
+          `Duration: ${(parsed.duration / 1000).toFixed(1)}s\n` +
+          `Teams: ${parsed.delegations?.length ?? 0}`,
           "info",
         );
       } catch {
-        ctx.ui.notify(lastCycleResult.slice(0, 500), "info");
+        ctx.ui.notify("Error parsing last result", "error");
       }
     },
   });
