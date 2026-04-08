@@ -1,10 +1,8 @@
 /**
  * Ephemeral worker agent factory.
  *
- * Workers use pi's createAgentSession under the hood, which gives them:
- * - Proper authentication via pi's AuthStorage
- * - Built-in tools (read for context-only workers)
- * - Retries and error handling from pi's infrastructure
+ * Workers use a lightweight pi-authenticated Agent (no session overhead).
+ * They receive a task, execute it, and return text output.
  */
 
 import type { AgentConfig, AgentResult } from "../types.js";
@@ -35,7 +33,7 @@ export async function runWorker(
       systemPrompt,
       model: config.model,
       thinkingLevel: config.model.thinkingLevel ?? "off",
-      withCodingTools: false, // Workers are text-only by default
+      tools: [], // Workers are text-only
     },
     task,
   );
@@ -43,13 +41,11 @@ export async function runWorker(
   const duration = Date.now() - startTime;
 
   if (result.success) {
-    // Estimate tokens from text length (rough approximation)
     const outputTokens = Math.ceil(result.text.length / 4);
     const inputTokens = Math.ceil((systemPrompt.length + task.length) / 4);
-    const cost = 0; // pi handles cost tracking internally
 
     if (costTracker) {
-      costTracker.record(config.id, inputTokens, outputTokens, cost);
+      costTracker.record(config.id, inputTokens, outputTokens, 0);
     }
 
     logger.info(config.id, "worker_completed", { duration, outputLength: result.text.length });

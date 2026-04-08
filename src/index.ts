@@ -75,9 +75,9 @@ export type { CostEntry } from "./utils/cost-tracker.js";
 // Environment
 export { resolveApiKey, envModelConfig, ENV_PROVIDER, ENV_MODEL } from "./env.js";
 
-// Session factory
-export { createSwarmSession, runOneShot } from "./session.js";
-export type { SwarmSessionOptions } from "./session.js";
+// Agent factory
+export { createSwarmAgent, runOneShot } from "./session.js";
+export type { SwarmAgentOptions } from "./session.js";
 
 // ---------------------------------------------------------------------------
 // Swarm — High-level convenience class

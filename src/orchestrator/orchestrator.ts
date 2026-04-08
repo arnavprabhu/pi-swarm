@@ -1,11 +1,11 @@
 /**
  * CEO / Orchestrator agent.
  *
- * Uses pi's createAgentSession for proper auth and model handling.
+ * Uses a lightweight pi-authenticated Agent with delegation tools.
  */
 
 import type { CycleResult, SwarmConfig } from "../types.js";
-import { createSwarmSession } from "../session.js";
+import { createSwarmAgent } from "../session.js";
 import { createOrchestratorToolDefinitions } from "./tools.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
@@ -56,27 +56,26 @@ export async function runOrchestrationCycle(
   logger.info("orchestrator", "cycle_started", { cycleId, directive });
 
   const systemPrompt = buildOrchestratorPrompt(config);
-  const { tools: customTools, getDelegationResults } = createOrchestratorToolDefinitions(config, costTracker);
+  const { tools, getDelegationResults } = createOrchestratorToolDefinitions(config, costTracker);
 
   const userMessage = context
     ? `${directive}\n\n## Additional Context\n${context}`
     : directive;
 
   try {
-    const session = await createSwarmSession({
+    const agent = createSwarmAgent({
       agentId: "orchestrator",
       systemPrompt,
       model: config.orchestrator.model,
       thinkingLevel: config.orchestrator.model.thinkingLevel ?? "off",
-      withCodingTools: false,
-      customTools,
+      tools,
     });
 
-    await session.prompt(userMessage);
-    await session.agent.waitForIdle();
+    await agent.prompt(userMessage);
+    await agent.waitForIdle();
 
     // Extract the last assistant message
-    const messages = session.agent.state.messages;
+    const messages = agent.state.messages;
     const lastMsg = [...messages].reverse().find(
       (m) => "role" in m && m.role === "assistant",
     ) as any;

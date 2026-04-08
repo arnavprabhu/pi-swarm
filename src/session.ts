@@ -1,131 +1,168 @@
 /**
  * Pi session factory for pi-swarm agents.
  *
- * Uses pi-coding-agent's createAgentSession SDK to create properly
- * authenticated agent sessions with full pi capabilities.
+ * Creates lightweight Agent instances using pi's auth infrastructure
+ * (AuthStorage + ModelRegistry) without the heavy createAgentSession
+ * overhead (resource loading, extension discovery, session persistence).
  *
- * This is the CORRECT way to create agents in pi's ecosystem:
- * - Auth is handled by pi's AuthStorage + ModelRegistry
- *   (reads from ~/.pi/agent/auth.json — same as `pi /login`)
- * - Model resolution follows pi's provider priority
- * - Built-in tools (bash, read, write, edit) are available
- * - Retries and error handling follow pi's patterns
+ * This gives us:
+ * - Proper auth via pi's AuthStorage (same as `pi /login`)
+ * - Env var fallback (GEMINI_API_KEY, OPENAI_API_KEY, etc.)
+ * - Model resolution via getModel()
+ * - Fast startup (no resource/extension scanning)
  */
 
-import {
-  createAgentSession,
-  SessionManager,
-  codingTools,
-  readOnlyTools,
-} from "@mariozechner/pi-coding-agent";
-import type { AgentSession, CreateAgentSessionOptions } from "@mariozechner/pi-coding-agent";
-import { getModel } from "@mariozechner/pi-ai";
-import type { Model } from "@mariozechner/pi-ai";
-import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+import { Agent } from "@mariozechner/pi-agent-core";
+import type { AgentTool, ThinkingLevel } from "@mariozechner/pi-agent-core";
+import { getModel, streamSimple, getEnvApiKey } from "@mariozechner/pi-ai";
+import type { Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
+import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { ModelConfig } from "./types.js";
 import { logger } from "./utils/logger.js";
 
-/**
- * Options for creating a pi-swarm agent session.
- */
-export interface SwarmSessionOptions {
-  /** Agent ID for logging. */
-  agentId: string;
-  /** System prompt for this agent. */
-  systemPrompt: string;
-  /** Model config (provider + model name). If omitted, uses pi's default. */
-  model?: ModelConfig;
-  /** Thinking level. Default: "off" for workers, configurable for leads/orchestrator. */
-  thinkingLevel?: ThinkingLevel;
-  /** Whether to include coding tools (bash, write, edit). Default: false for workers. */
-  withCodingTools?: boolean;
-  /** Working directory for tools. Default: process.cwd() */
-  cwd?: string;
-  /** Custom tools to add (pi extension ToolDefinition format). */
-  customTools?: CreateAgentSessionOptions["customTools"];
+// ---------------------------------------------------------------------------
+// Shared auth infrastructure (created once, reused across all agents)
+// ---------------------------------------------------------------------------
+
+let _authStorage: AuthStorage | null = null;
+let _modelRegistry: ModelRegistry | null = null;
+
+function getAuthStorage(): AuthStorage {
+  if (!_authStorage) {
+    _authStorage = AuthStorage.create();
+  }
+  return _authStorage;
+}
+
+function getModelRegistry(): ModelRegistry {
+  if (!_modelRegistry) {
+    _modelRegistry = ModelRegistry.create(getAuthStorage());
+  }
+  return _modelRegistry;
 }
 
 /**
- * Create an ephemeral pi agent session.
+ * Create an authenticated stream function using pi's ModelRegistry.
  *
- * Uses SessionManager.inMemory() so the session is not persisted.
- * Auth comes from pi's AuthStorage (same as `pi /login`).
+ * This follows the same pattern as pi-coding-agent's SDK:
+ * resolve API key + headers from ModelRegistry, then call streamSimple.
  */
-export async function createSwarmSession(options: SwarmSessionOptions): Promise<AgentSession> {
+function createPiStreamFn() {
+  const registry = getModelRegistry();
+
+  return async (model: Model<any>, context: any, options?: SimpleStreamOptions) => {
+    const auth = await registry.getApiKeyAndHeaders(model);
+
+    if (!auth.ok) {
+      // Fall back to env var
+      const envKey = getEnvApiKey(model.provider as any);
+      if (envKey) {
+        return streamSimple(model, context, { ...options, apiKey: envKey });
+      }
+      throw new Error(
+        `No API key for provider "${model.provider}". ` +
+          `Run 'pi /login' or set the appropriate env var in .env`,
+      );
+    }
+
+    return streamSimple(model, context, {
+      ...options,
+      apiKey: auth.apiKey,
+      headers: auth.headers || options?.headers
+        ? { ...auth.headers, ...options?.headers }
+        : undefined,
+    });
+  };
+}
+
+// Shared stream function
+const piStreamFn = createPiStreamFn();
+
+// ---------------------------------------------------------------------------
+// Agent factory
+// ---------------------------------------------------------------------------
+
+export interface SwarmAgentOptions {
+  /** Agent ID for logging. */
+  agentId: string;
+  /** System prompt. */
+  systemPrompt: string;
+  /** Model config. If omitted, uses env defaults. */
+  model?: ModelConfig;
+  /** Thinking level. Default: "off" */
+  thinkingLevel?: ThinkingLevel;
+  /** Tools to provide to the agent. */
+  tools?: AgentTool<any, any>[];
+}
+
+/**
+ * Create a lightweight pi-authenticated Agent.
+ *
+ * Much faster than createAgentSession — no resource loading,
+ * no extension discovery, no session persistence.
+ */
+export function createSwarmAgent(options: SwarmAgentOptions): Agent {
   const {
     agentId,
     systemPrompt,
     model: modelConfig,
     thinkingLevel = "off",
-    withCodingTools = false,
-    cwd = process.cwd(),
-    customTools,
+    tools = [],
   } = options;
 
-  logger.info(agentId, "creating_session", {
+  logger.info(agentId, "creating_agent", {
     model: modelConfig ? `${modelConfig.provider}/${modelConfig.model}` : "default",
     thinkingLevel,
-    withCodingTools,
+    toolCount: tools.length,
   });
 
-  // Resolve model if specified, otherwise let pi auto-detect
-  let model: Model<any> | undefined;
+  let model: Model<any>;
   if (modelConfig) {
-    try {
-      model = (getModel as Function)(modelConfig.provider, modelConfig.model);
-    } catch (e) {
-      logger.warn(agentId, "model_resolution_fallback", {
-        requested: `${modelConfig.provider}/${modelConfig.model}`,
-        error: e instanceof Error ? e.message : String(e),
-      });
-      // Fall through — let pi's model resolver find an available model
-    }
+    model = (getModel as Function)(modelConfig.provider, modelConfig.model);
+  } else {
+    // Use env defaults
+    const provider = process.env.PROVIDER ?? "google";
+    const modelId = process.env.MODEL ?? "gemini-2.5-flash";
+    model = (getModel as Function)(provider, modelId);
   }
 
-  const sessionOptions: CreateAgentSessionOptions = {
-    cwd,
-    model,
-    thinkingLevel,
-    tools: withCodingTools ? codingTools : readOnlyTools,
-    customTools,
-    sessionManager: SessionManager.inMemory(cwd),
-  };
-
-  const { session, modelFallbackMessage } = await createAgentSession(sessionOptions);
-
-  if (modelFallbackMessage) {
-    logger.warn(agentId, "model_fallback", { message: modelFallbackMessage });
-  }
-
-  // Override system prompt
-  session.agent.state.systemPrompt = systemPrompt;
-
-  logger.info(agentId, "session_created", {
-    model: session.model ? `${session.model.provider}/${session.model.id}` : "none",
-    thinkingLevel: session.thinkingLevel,
+  const agent = new Agent({
+    initialState: {
+      systemPrompt,
+      model,
+      tools,
+      thinkingLevel,
+    },
+    streamFn: piStreamFn,
   });
 
-  return session;
+  logger.info(agentId, "agent_created", {
+    model: `${model.provider}/${model.id}`,
+    thinkingLevel,
+  });
+
+  return agent;
 }
 
 /**
- * Run a one-shot prompt against a pi agent session.
+ * Run a one-shot prompt against a lightweight agent.
  *
- * Creates a session, sends the prompt, waits for completion, and
- * returns the assistant's response text.
+ * Creates an Agent, sends the prompt, waits for idle, extracts output.
+ * No session overhead — just pure agent execution.
  */
 export async function runOneShot(
-  options: SwarmSessionOptions,
+  options: SwarmAgentOptions,
   prompt: string,
 ): Promise<{ text: string; success: boolean; error?: string }> {
   try {
-    const session = await createSwarmSession(options);
+    const agent = createSwarmAgent(options);
 
-    await session.prompt(prompt);
-    await session.agent.waitForIdle();
+    await agent.prompt(prompt);
+    await agent.waitForIdle();
 
     // Extract the last assistant message
-    const messages = session.agent.state.messages;
+    const messages = agent.state.messages;
     const lastMsg = [...messages].reverse().find(
       (m) => "role" in m && m.role === "assistant",
     ) as any;
@@ -148,4 +185,30 @@ export async function runOneShot(
     const errorMessage = error instanceof Error ? error.message : String(error);
     return { text: "", success: false, error: errorMessage };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Tool definition converter
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert pi ToolDefinition[] (from defineTool) to AgentTool[] for direct Agent use.
+ *
+ * The Agent class uses AgentTool, but defineTool creates ToolDefinition
+ * (which has an extra `ctx` parameter in execute). We strip that.
+ */
+export function toAgentTools(toolDefs: ToolDefinition<any, any>[]): AgentTool<any, any>[] {
+  return toolDefs.map((def) => ({
+    name: def.name,
+    label: def.label,
+    description: def.description,
+    parameters: def.parameters,
+    prepareArguments: def.prepareArguments,
+    execute: async (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
+      // ToolDefinition.execute takes (toolCallId, params, signal, onUpdate, ctx)
+      // AgentTool.execute takes (toolCallId, params, signal, onUpdate)
+      // We pass undefined for ctx since we're not in an extension context
+      return def.execute(toolCallId, params, signal, onUpdate, undefined as any);
+    },
+  }));
 }

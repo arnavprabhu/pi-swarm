@@ -1,12 +1,12 @@
 /**
  * Team lead agent factory.
  *
- * Team leads use pi's createAgentSession with custom tools for
- * spawning workers and reporting to the orchestrator.
+ * Team leads use a lightweight pi-authenticated Agent with custom
+ * tools for spawning workers and reporting.
  */
 
 import type { AgentConfig, AgentResult, ModelConfig, TeamId } from "../types.js";
-import { createSwarmSession } from "../session.js";
+import { createSwarmAgent } from "../session.js";
 import { createTeamLeadToolDefinitions } from "./tools.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
@@ -31,7 +31,7 @@ export async function runTeamLead(
     ? `${config.systemPrompt}\n\n## Orchestrator Context\n${context}`
     : config.systemPrompt;
 
-  const customTools = createTeamLeadToolDefinitions(
+  const tools = createTeamLeadToolDefinitions(
     config.team as TeamId,
     config.id,
     wModel,
@@ -39,22 +39,21 @@ export async function runTeamLead(
   );
 
   try {
-    const session = await createSwarmSession({
+    const agent = createSwarmAgent({
       agentId: config.id,
       systemPrompt,
       model: config.model,
       thinkingLevel: config.model.thinkingLevel ?? "off",
-      withCodingTools: false,
-      customTools,
+      tools,
     });
 
-    await session.prompt(directive);
-    await session.agent.waitForIdle();
+    await agent.prompt(directive);
+    await agent.waitForIdle();
 
     const duration = Date.now() - startTime;
 
     // Extract the last assistant message
-    const messages = session.agent.state.messages;
+    const messages = agent.state.messages;
     const lastMsg = [...messages].reverse().find(
       (m) => "role" in m && m.role === "assistant",
     ) as any;
