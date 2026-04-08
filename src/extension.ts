@@ -64,10 +64,11 @@ export default function piSwarmExtension(pi: ExtensionAPI): void {
       }),
       execute: async (_toolCallId, args, _signal, _onUpdate, ctx) => {
         // ctx is the ExtensionContext — read pi's current model from it
-        const config = getConfig(ctx?.model);
-        if (args.budget !== undefined) {
-          config.costBudget = args.budget;
-        }
+        const baseConfig = getConfig(ctx?.model);
+        // Create a copy to avoid mutating the cached config
+        const config = args.budget !== undefined
+          ? { ...baseConfig, costBudget: args.budget }
+          : baseConfig;
 
         const result = await runOrchestrationCycle(config, args.task, args.context);
         lastCycleResult = JSON.stringify(result, null, 2);
@@ -78,6 +79,7 @@ export default function piSwarmExtension(pi: ExtensionAPI): void {
           `**Cycle ID:** ${result.cycleId}`,
           `**Duration:** ${(result.duration / 1000).toFixed(1)}s`,
           `**Teams Involved:** ${result.delegations.length}`,
+          `**Total Cost:** $${result.totalCost.toFixed(4)}`,
           ``,
           `## Result`,
           result.companyStatus,

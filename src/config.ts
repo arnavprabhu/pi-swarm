@@ -14,15 +14,21 @@ import { envModelConfig } from "./env.js";
 // Lazy model config — reads from .env at call time, not import time
 // ---------------------------------------------------------------------------
 
-/** Get the default model config from .env, or undefined if not set. */
-export function getDefaultModelConfig(): ModelConfig | undefined {
+/**
+ * Get the default model config from .env, or undefined if not set.
+ * Use these getters instead of constants to ensure env is read at call time.
+ */
+export function getDefaultOrchestratorModel(): ModelConfig | undefined {
   return envModelConfig();
 }
 
-// Backward compat (lazy — evaluated when accessed, not at import)
-export const DEFAULT_ORCHESTRATOR_MODEL: ModelConfig | undefined = undefined;
-export const DEFAULT_TEAM_LEAD_MODEL: ModelConfig | undefined = undefined;
-export const DEFAULT_WORKER_MODEL: ModelConfig | undefined = undefined;
+export function getDefaultTeamLeadModel(): ModelConfig | undefined {
+  return envModelConfig();
+}
+
+export function getDefaultWorkerModel(): ModelConfig | undefined {
+  return envModelConfig();
+}
 
 // ---------------------------------------------------------------------------
 // Team builders

@@ -12,10 +12,7 @@ import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
 import type { CycleTracker } from "../ui/tracker.js";
 import type { ProgressLogger } from "../ui/progress.js";
-
-function text(t: string) {
-  return { content: [{ type: "text" as const, text: t }], details: undefined };
-}
+import { toolResult as text } from "../utils/tool-helpers.js";
 
 export interface OrchestratorToolOptions {
   costTracker: CostTracker;
@@ -84,27 +81,41 @@ export function createOrchestratorToolDefinitions(
       context: Type.Optional(Type.String({ description: "Shared context" })),
     }),
     execute: async (_id: string, args: { teams: string[]; task: string; context?: string }) => {
+      if (costTracker.isOverBudget) return text(`Error: Budget exceeded`);
+
       logger.info("orchestrator", "broadcasting", { teams: args.teams, task: args.task });
 
-      const promises = args.teams.map(async (teamId: string) => {
-        const tc = config.teams[teamId];
-        let lc = tc?.lead;
-        if (!lc) {
-          const role = getTeamLeadRole(teamId as TeamId);
-          if (!role) return { team: teamId, error: `Not found` };
-          lc = teamLeadRoleToConfig(role, config.defaults.teamLeadModel);
-        }
-        progress?.delegating("Orchestrator", lc.name, teamId);
-        const leadOpts: TeamLeadRunOptions = { costTracker, cycleTracker, progress, parentId: "orchestrator" };
-        const result = await runTeamLead(lc, args.task, args.context, config.defaults.workerModel, leadOpts);
-        delegationResults.set(teamId, result);
-        return { team: teamId, result };
-      });
+      // Run teams with concurrency limit
+      const maxConcurrent = config.maxConcurrentAgents ?? 10;
+      type BroadcastResult = { team: string; error: string } | { team: string; result: AgentResult };
+      const results: BroadcastResult[] = [];
+      const teamIds = [...args.teams];
 
-      const results = await Promise.all(promises);
+      // Process in batches respecting maxConcurrentAgents
+      for (let i = 0; i < teamIds.length; i += maxConcurrent) {
+        const batch = teamIds.slice(i, i + maxConcurrent);
+        const batchResults = await Promise.all(batch.map(async (teamId: string): Promise<BroadcastResult> => {
+          if (costTracker.isOverBudget) return { team: teamId, error: "Budget exceeded" };
+
+          const tc = config.teams[teamId];
+          let lc = tc?.lead;
+          if (!lc) {
+            const role = getTeamLeadRole(teamId as TeamId);
+            if (!role) return { team: teamId, error: `Not found` };
+            lc = teamLeadRoleToConfig(role, config.defaults.teamLeadModel);
+          }
+          progress?.delegating("Orchestrator", lc.name, teamId);
+          const leadOpts: TeamLeadRunOptions = { costTracker, cycleTracker, progress, parentId: "orchestrator" };
+          const result = await runTeamLead(lc, args.task, args.context, config.defaults.workerModel, leadOpts);
+          delegationResults.set(teamId, result);
+          return { team: teamId, result };
+        }));
+        results.push(...batchResults);
+      }
+
       const t = results.map((r) => {
-        if ("error" in r && !("result" in r)) return `[${r.team}] Error: ${r.error}`;
-        const res = r.result!;
+        if ("error" in r && !("result" in r)) return `[${r.team}] Error: ${(r as { team: string; error: string }).error}`;
+        const res = (r as { team: string; result: AgentResult }).result;
         return `[${r.team}] ${res.success ? "OK" : "FAIL"}: ${res.output.slice(0, 300)}`;
       }).join("\n\n---\n\n");
       return text(t);
@@ -119,8 +130,10 @@ export function createOrchestratorToolDefinitions(
     execute: async () => {
       if (delegationResults.size === 0) return text("No delegations yet.");
       const lines = Array.from(delegationResults.entries()).map(
-        ([team, r]) => `## ${team.toUpperCase()}\n${r.success ? "Complete" : "Failed"} (${r.duration}ms)\n\n${r.output}`,
+        ([team, r]) => `## ${team.toUpperCase()}\n${r.success ? "Complete" : "Failed"} (${r.duration}ms, $${r.cost.total.toFixed(4)})\n\n${r.output}`,
       );
+      const totalCost = Array.from(delegationResults.values()).reduce((sum, r) => sum + r.cost.total, 0);
+      lines.push(`\n**Total cost across teams: $${totalCost.toFixed(4)}**`);
       return text(lines.join("\n\n---\n\n"));
     },
   };
@@ -134,10 +147,14 @@ export function createOrchestratorToolDefinitions(
       nextSteps: Type.Optional(Type.String({ description: "Next steps" })),
     }),
     execute: async (_id: string, args: { summary: string; nextSteps?: string }) => {
-      logger.info("orchestrator", "cycle_finished", { summary: args.summary });
+      logger.info("orchestrator", "cycle_finished", { summary: args.summary, totalCost: costTracker.totalCost });
+      const budgetLine = config.costBudget
+        ? `\n**Budget:** $${costTracker.totalCost.toFixed(4)} / $${config.costBudget.toFixed(2)} (${costTracker.remaining !== undefined ? `$${costTracker.remaining.toFixed(4)} remaining` : "unlimited"})`
+        : `\n**Total cost:** $${costTracker.totalCost.toFixed(4)}`;
       return text([
         "# Cycle Complete",
         `\n## Summary\n${args.summary}`,
+        budgetLine,
         args.nextSteps ? `\n## Next Steps\n${args.nextSteps}` : "",
       ].join("\n"));
     },
@@ -148,5 +165,3 @@ export function createOrchestratorToolDefinitions(
     getDelegationResults: () => new Map(delegationResults),
   };
 }
-
-export const createOrchestratorTools = createOrchestratorToolDefinitions;

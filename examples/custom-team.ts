@@ -16,7 +16,9 @@ const BOLD = "\x1b[1m";
 const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";
 
-const model = envModelConfig();
+// Resolve model from .env or use a placeholder for pi auth runtime resolution
+const PLACEHOLDER_MODEL = { provider: "anthropic" as any, model: "placeholder" };
+const model = envModelConfig() ?? PLACEHOLDER_MODEL;
 
 const researchTeam: TeamConfig = {
   lead: {

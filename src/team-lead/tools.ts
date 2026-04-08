@@ -8,15 +8,11 @@ import type { ModelConfig, AgentResult, TeamId } from "../types.js";
 import { runWorker } from "../worker/worker.js";
 import type { WorkerRunOptions } from "../worker/worker.js";
 import { getTeamWorkerRoles, workerRoleToConfig } from "../worker/roles.js";
-import { createReport } from "../protocol/messages.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
 import type { CycleTracker } from "../ui/tracker.js";
 import type { ProgressLogger } from "../ui/progress.js";
-
-function text(t: string) {
-  return { content: [{ type: "text" as const, text: t }], details: undefined };
-}
+import { toolResult as text } from "../utils/tool-helpers.js";
 
 export interface TeamLeadToolOptions {
   costTracker: CostTracker;
@@ -91,15 +87,16 @@ export function createTeamLeadToolDefinitions(
   const reportTool: AgentTool<any, any> = {
     name: "report_to_orchestrator",
     label: "Report",
-    description: "Send a report back to the orchestrator.",
+    description: "Send a structured report back to the orchestrator summarizing your team's work.",
     parameters: Type.Object({
       summary: Type.String({ description: "One-line summary" }),
       body: Type.String({ description: "Detailed report" }),
     }),
     execute: async (_id: string, args: { summary: string; body: string }) => {
-      createReport(leadId, "orchestrator", args.summary, args.body, "");
+      // Create a structured report message (the report content is returned
+      // as tool output, which the orchestrator sees in the agent's response)
       logger.info(leadId, "report_sent", { summary: args.summary });
-      return text(`Report sent: ${args.summary}`);
+      return text(`## Report from ${leadId}\n\n**Summary:** ${args.summary}\n\n${args.body}`);
     },
   };
 
@@ -119,5 +116,3 @@ export function createTeamLeadToolDefinitions(
 
   return [spawnWorkerTool, listWorkersTool, reportTool, getResultsTool];
 }
-
-export const createTeamLeadTools = createTeamLeadToolDefinitions;

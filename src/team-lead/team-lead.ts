@@ -80,14 +80,21 @@ export async function runTeamLead(
 
     if (error) throw new Error(error);
 
-    cycleTracker?.complete(config.id, { duration });
+    // Estimate the team lead's own token usage (rough heuristic)
+    const leadInputTokens = Math.ceil((systemPrompt.length + directive.length) / 4);
+    const leadOutputTokens = Math.ceil(text.length / 4);
+    const leadCost = (leadInputTokens / 1000) * 0.01 + (leadOutputTokens / 1000) * 0.03;
+
+    tracker.record(config.id, leadInputTokens, leadOutputTokens, leadCost);
+
+    cycleTracker?.complete(config.id, { duration, cost: leadCost });
     progress?.complete(config.name, "team-lead", duration);
-    logger.info(config.id, "team_lead_completed", { duration });
+    logger.info(config.id, "team_lead_completed", { duration, cost: tracker.totalCost });
 
     return {
       agentId: config.id, success: true, output: text,
-      cost: { input: 0, output: 0, total: tracker.totalCost },
-      tokensUsed: { input: 0, output: 0 }, duration, toolCalls: [],
+      cost: { input: (leadInputTokens / 1000) * 0.01, output: (leadOutputTokens / 1000) * 0.03, total: tracker.totalCost },
+      tokensUsed: { input: leadInputTokens, output: leadOutputTokens }, duration, toolCalls: [],
     };
   } catch (error) {
     const duration = Date.now() - startTime;

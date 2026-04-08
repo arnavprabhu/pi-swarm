@@ -1,10 +1,9 @@
 /**
  * Worker role definitions.
- * 22 specialist roles across 5 teams, mapped from the company-structure spec.
+ * 21 specialist roles across 5 teams, mapped from the company-structure spec.
  */
 
 import type { AgentConfig, ModelConfig, TeamId } from "../types.js";
-import type { KnownProvider } from "@mariozechner/pi-ai";
 
 export interface WorkerRole {
   id: string;

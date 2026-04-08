@@ -6,9 +6,8 @@
  */
 
 import { config } from "dotenv";
-import { getEnvApiKey, streamSimple } from "@mariozechner/pi-ai";
-import type { KnownProvider, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
-import type { StreamFn } from "@mariozechner/pi-agent-core";
+import { getEnvApiKey } from "@mariozechner/pi-ai";
+import type { KnownProvider } from "@mariozechner/pi-ai";
 import type { ModelConfig } from "./types.js";
 
 // Load .env file into process.env
@@ -49,31 +48,3 @@ export function envModelConfig(
   };
 }
 
-/**
- * Create a stream function that auto-injects the API key.
- *
- * This follows the same pattern as pi-coding-agent's SDK:
- * the streamFn wraps streamSimple and resolves the API key
- * from environment variables before each LLM call.
- *
- * This is the CORRECT way to provide auth to pi-agent-core's Agent.
- */
-export function createAuthenticatedStreamFn(): StreamFn {
-  return (model: Model<any>, context: any, options?: SimpleStreamOptions) => {
-    const apiKey = resolveApiKey(model.provider);
-    if (!apiKey) {
-      throw new Error(
-        `No API key found for provider "${model.provider}". ` +
-          `Set the appropriate env var in your .env file. ` +
-          `Run: cp .env.example .env`,
-      );
-    }
-    return streamSimple(model, context, {
-      ...options,
-      apiKey,
-    });
-  };
-}
-
-/** Pre-built authenticated stream function. */
-export const authenticatedStreamFn: StreamFn = createAuthenticatedStreamFn();

@@ -62,21 +62,22 @@ export { ROUTING_RULES, findRoutes, resolvePath } from "./protocol/router.js";
 // Config
 export {
   createDefaultConfig,
-  DEFAULT_ORCHESTRATOR_MODEL,
-  DEFAULT_TEAM_LEAD_MODEL,
-  DEFAULT_WORKER_MODEL,
+  getDefaultOrchestratorModel,
+  getDefaultTeamLeadModel,
+  getDefaultWorkerModel,
 } from "./config.js";
 
 // Utilities
 export { Logger, logger } from "./utils/logger.js";
 export { CostTracker } from "./utils/cost-tracker.js";
 export type { CostEntry } from "./utils/cost-tracker.js";
+export { toolResult } from "./utils/tool-helpers.js";
 
 // Environment
-export { resolveApiKey, envModelConfig, ENV_PROVIDER, ENV_MODEL } from "./env.js";
+export { resolveApiKey, envModelConfig } from "./env.js";
 
 // Agent factory
-export { createSwarmAgent, runOneShot } from "./session.js";
+export { createSwarmAgent, runOneShot, toAgentTools } from "./session.js";
 export type { SwarmAgentOptions } from "./session.js";
 
 // UI

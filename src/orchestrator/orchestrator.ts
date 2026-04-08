@@ -129,7 +129,13 @@ export async function runOrchestrationCycle(
     const delegations = Array.from(getDelegationResults().values());
     const duration = Date.now() - startTime;
 
-    if (!error) cycleTracker.complete("orchestrator", { duration });
+    // Record the orchestrator's own estimated cost
+    const orchInputTokens = Math.ceil((systemPrompt.length + userMessage.length) / 4);
+    const orchOutputTokens = Math.ceil(text.length / 4);
+    const orchCost = (orchInputTokens / 1000) * 0.01 + (orchOutputTokens / 1000) * 0.03;
+    costTracker.record("orchestrator", orchInputTokens, orchOutputTokens, orchCost);
+
+    if (!error) cycleTracker.complete("orchestrator", { duration, cost: orchCost });
     progress.cycleEnd(duration, delegations.length);
 
     // Print the team tree

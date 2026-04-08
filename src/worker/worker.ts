@@ -59,8 +59,11 @@ export async function runWorker(
     const outputTokens = Math.ceil(result.text.length / 4);
     const inputTokens = Math.ceil((systemPrompt.length + task.length) / 4);
 
-    costTracker?.record(config.id, inputTokens, outputTokens, 0);
-    cycleTracker?.complete(config.id, { duration, outputLength: result.text.length });
+    // Estimate cost (rough heuristic: $0.01 per 1K input, $0.03 per 1K output)
+    const estimatedCost = (inputTokens / 1000) * 0.01 + (outputTokens / 1000) * 0.03;
+
+    costTracker?.record(config.id, inputTokens, outputTokens, estimatedCost);
+    cycleTracker?.complete(config.id, { duration, outputLength: result.text.length, cost: estimatedCost });
     progress?.complete(config.name, "worker", duration, `${result.text.length} chars`);
 
     logger.info(config.id, "worker_completed", { duration, outputLength: result.text.length });
@@ -69,7 +72,7 @@ export async function runWorker(
       agentId: config.id,
       success: true,
       output: result.text,
-      cost: { input: 0, output: 0, total: 0 },
+      cost: { input: (inputTokens / 1000) * 0.01, output: (outputTokens / 1000) * 0.03, total: estimatedCost },
       tokensUsed: { input: inputTokens, output: outputTokens },
       duration,
       toolCalls: [],
