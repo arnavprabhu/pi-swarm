@@ -21,7 +21,7 @@ pi-swarm organizes AI agents into a hierarchical company structure — an orches
       5 eng    4 spec     4 mktrs  4 ops     4 gtm
 ```
 
-**22 built-in worker roles** across 5 teams:
+**21 built-in worker roles** across 5 teams:
 - **Dev**: Frontend, Backend, Infra, QA, Security
 - **Product**: PM, UX Designer, Data Analyst, Technical Writer
 - **Marketing**: Content Writer, SEO, Growth, Brand Designer
@@ -30,29 +30,73 @@ pi-swarm organizes AI agents into a hierarchical company structure — an orches
 
 ## Quick Start
 
+### 1. Setup
+
+```bash
+git clone https://github.com/arnavprabhu/pi-swarm.git
+cd pi-swarm
+npm install
+```
+
+### 2. Configure your API key
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set your provider, model, and API key. Example for Gemini:
+
+```env
+PROVIDER=google
+MODEL=gemini-2.5-flash
+GEMINI_API_KEY=your-key-here
+```
+
+Supported env vars per provider:
+
+| Provider | Env Var | Key Source |
+|----------|---------|------------|
+| Google Gemini | `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| OpenAI | `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| Anthropic | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| Groq | `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) |
+| OpenRouter | `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) |
+| Mistral | `MISTRAL_API_KEY` | [console.mistral.ai](https://console.mistral.ai/api-keys) |
+| xAI | `XAI_API_KEY` | [console.x.ai](https://console.x.ai) |
+
+### 3. Build & Run
+
+```bash
+npm run build
+npx tsx examples/basic-orchestration.ts
+```
+
 ### As a Pi Extension
 
 ```bash
-# Install
-pi install npm:pi-swarm
-
-# Or load directly
 pi -e ./dist/extension.js
 
-# Then use in pi
+# Then use in pi:
 /swarm Plan the Q2 product launch
 /swarm-config
 ```
 
 ### As an SDK
 
-```bash
-npm install pi-swarm
-```
-
 ```typescript
 import { Swarm } from "pi-swarm";
 
+// Reads PROVIDER and MODEL from .env automatically
+const swarm = new Swarm({ name: "My Company", costBudget: 2.0 });
+
+const result = await swarm.run("Build a REST API for user management");
+console.log(result.companyStatus);
+console.log(`Cost: $${result.totalCost.toFixed(4)}`);
+```
+
+Or override models per tier:
+
+```typescript
 const swarm = new Swarm({
   name: "My Company",
   orchestratorModel: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
@@ -60,10 +104,6 @@ const swarm = new Swarm({
   workerModel:       { provider: "groq",      model: "llama-3.3-70b-versatile" },
   costBudget: 2.0,
 });
-
-const result = await swarm.run("Build a REST API for user management");
-console.log(result.companyStatus);
-console.log(`Cost: $${result.totalCost.toFixed(4)}`);
 ```
 
 ## Model Agnostic
