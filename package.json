@@ -1,0 +1,27 @@
+{
+  "name": "pi-swarm",
+  "version": "0.1.0",
+  "description": "Multi-agent orchestration framework built on pi.dev",
+  "keywords": ["pi-package", "multi-agent", "orchestration", "ai-agents"],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "pi": {
+    "extensions": ["./dist/extension.js"],
+    "skills": ["./skills"]
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-agent-core": "*",
+    "@mariozechner/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "license": "MIT"
+}
