@@ -127,17 +127,28 @@ export function createSwarmAgent(options: SwarmAgentOptions): Agent {
     if (provider && modelId) {
       model = (getModel as Function)(provider, modelId);
     } else {
-      // No env config — try to find any model with a configured API key
-      // via pi's ModelRegistry
+      // No env config — try to find a model with a configured API key
+      // via pi's ModelRegistry (same auth as `pi /login`)
       const registry = getModelRegistry();
-      const available = registry.getAvailable?.();
-      if (available && available.length > 0) {
-        model = available[0];
-        logger.info(agentId, "model_auto_resolved", { model: `${model.provider}/${model.id}` });
+      const available = registry.getAvailable();
+
+      if (available.length > 0) {
+        // Prefer well-known capable models over obscure ones
+        const preferred = available.find((m) =>
+          m.id.includes("sonnet") || m.id.includes("opus") ||
+          m.id.includes("gpt-4") || m.id.includes("gemini") ||
+          m.id.includes("flash")
+        );
+        model = preferred ?? available[0];
+        logger.info(agentId, "model_auto_resolved", {
+          model: `${model.provider}/${model.id}`,
+          totalAvailable: available.length,
+        });
       } else {
         throw new Error(
           "No model available. Either:\n" +
-          "  1. Set PROVIDER and MODEL in .env (e.g. PROVIDER=google MODEL=gemini-2.5-flash)\n" +
+          "  1. Set PROVIDER and MODEL in .env\n" +
+          "     Example: PROVIDER=google  MODEL=gemini-2.5-flash\n" +
           "  2. Authenticate via pi: pi /login",
         );
       }
