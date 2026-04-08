@@ -5,7 +5,7 @@
     "moduleResolution": "Node16",
     "lib": ["ES2022"],
     "outDir": "dist",
-    "rootDir": ".",
+    "rootDir": "src",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
