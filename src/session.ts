@@ -121,9 +121,15 @@ export function createSwarmAgent(options: SwarmAgentOptions): Agent {
   if (modelConfig) {
     model = (getModel as Function)(modelConfig.provider, modelConfig.model);
   } else {
-    // Use env defaults
-    const provider = process.env.PROVIDER ?? "google";
-    const modelId = process.env.MODEL ?? "gemini-2.5-flash";
+    // Use env defaults — PROVIDER and MODEL must be set in .env or via pi auth
+    const provider = process.env.PROVIDER;
+    const modelId = process.env.MODEL;
+    if (!provider || !modelId) {
+      throw new Error(
+        "No model configured. Set PROVIDER and MODEL in your .env file, or pass a model config.\n" +
+        "Example .env:\n  PROVIDER=google\n  MODEL=gemini-2.5-flash\n  GEMINI_API_KEY=your-key",
+      );
+    }
     model = (getModel as Function)(provider, modelId);
   }
 

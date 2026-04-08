@@ -14,11 +14,11 @@ import type { ModelConfig } from "./types.js";
 // Load .env file into process.env
 config();
 
-/** The provider from .env (defaults to "google"). */
-export const ENV_PROVIDER: string = process.env.PROVIDER ?? "google";
+/** The provider from .env. Must be set — no hardcoded default. */
+export const ENV_PROVIDER: string = process.env.PROVIDER ?? "";
 
-/** The model from .env (defaults to "gemini-2.5-flash"). */
-export const ENV_MODEL: string = process.env.MODEL ?? "gemini-2.5-flash";
+/** The model from .env. Must be set — no hardcoded default. */
+export const ENV_MODEL: string = process.env.MODEL ?? "";
 
 /**
  * Resolve an API key for a given provider.
@@ -31,14 +31,26 @@ export function resolveApiKey(provider: string): string | undefined {
 /**
  * Build a ModelConfig from environment variables.
  * Optionally override provider/model for a specific tier.
+ * Throws if PROVIDER/MODEL are not set and no overrides given.
  */
 export function envModelConfig(
   providerOverride?: string,
   modelOverride?: string,
 ): ModelConfig {
+  const provider = providerOverride ?? ENV_PROVIDER;
+  const model = modelOverride ?? ENV_MODEL;
+
+  if (!provider || !model) {
+    throw new Error(
+      "No model configured. Set PROVIDER and MODEL in your .env file.\n" +
+      "Example:\n  PROVIDER=google\n  MODEL=gemini-2.5-flash\n  GEMINI_API_KEY=your-key\n\n" +
+      "Or authenticate via pi: pi /login",
+    );
+  }
+
   return {
-    provider: (providerOverride ?? ENV_PROVIDER) as KnownProvider,
-    model: modelOverride ?? ENV_MODEL,
+    provider: provider as KnownProvider,
+    model,
   };
 }
 

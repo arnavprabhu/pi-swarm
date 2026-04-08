@@ -1,39 +1,38 @@
 /**
  * Default configurations for pi-swarm.
  *
- * Provides sensible defaults for all 5 teams and their workers.
- * All models are configurable — the defaults below are just starting points.
+ * All model defaults come from .env (PROVIDER + MODEL).
+ * No hardcoded providers — ever.
  */
 
 import type { ModelConfig, SwarmConfig, TeamConfig } from "./types.js";
-import type { KnownProvider } from "@mariozechner/pi-ai";
 import { TEAM_LEAD_ROLES, teamLeadRoleToConfig } from "./team-lead/roles.js";
 import { getTeamWorkerRoles, workerRoleToConfig } from "./worker/roles.js";
+import { envModelConfig } from "./env.js";
 
 // ---------------------------------------------------------------------------
-// Default model configs (user should override these)
+// Default model configs — read from .env / pi auth, never hardcoded
 // ---------------------------------------------------------------------------
 
-/** Default model for the orchestrator (highest capability). */
-export const DEFAULT_ORCHESTRATOR_MODEL: ModelConfig = {
-  provider: "anthropic",
-  model: "claude-sonnet-4-20250514",
-  thinkingLevel: "low",
-};
+/** Default model for the orchestrator. Read from PROVIDER + MODEL env vars. */
+export function getDefaultOrchestratorModel(): ModelConfig {
+  return envModelConfig();
+}
 
-/** Default model for team leads (balanced capability/cost). */
-export const DEFAULT_TEAM_LEAD_MODEL: ModelConfig = {
-  provider: "anthropic",
-  model: "claude-sonnet-4-20250514",
-  thinkingLevel: "off",
-};
+/** Default model for team leads. Read from PROVIDER + MODEL env vars. */
+export function getDefaultTeamLeadModel(): ModelConfig {
+  return envModelConfig();
+}
 
-/** Default model for workers (fast and cheap). */
-export const DEFAULT_WORKER_MODEL: ModelConfig = {
-  provider: "anthropic",
-  model: "claude-sonnet-4-20250514",
-  thinkingLevel: "off",
-};
+/** Default model for workers. Read from PROVIDER + MODEL env vars. */
+export function getDefaultWorkerModel(): ModelConfig {
+  return envModelConfig();
+}
+
+// Keep these for backward compat but they now read from env
+export const DEFAULT_ORCHESTRATOR_MODEL: ModelConfig = envModelConfig();
+export const DEFAULT_TEAM_LEAD_MODEL: ModelConfig = envModelConfig();
+export const DEFAULT_WORKER_MODEL: ModelConfig = envModelConfig();
 
 // ---------------------------------------------------------------------------
 // Team builders
@@ -63,8 +62,8 @@ function buildTeamConfig(
 /**
  * Create a default SwarmConfig with all 5 teams using built-in roles.
  *
- * @param name - Name for this swarm (default: "Pi Swarm")
- * @param overrides - Partial overrides for model configs or budget
+ * Model defaults come from .env (PROVIDER + MODEL). Override per tier
+ * by passing orchestratorModel, teamLeadModel, or workerModel.
  */
 export function createDefaultConfig(
   name?: string,
@@ -76,9 +75,9 @@ export function createDefaultConfig(
     maxConcurrentAgents?: number;
   },
 ): SwarmConfig {
-  const oModel = overrides?.orchestratorModel ?? DEFAULT_ORCHESTRATOR_MODEL;
-  const tlModel = overrides?.teamLeadModel ?? DEFAULT_TEAM_LEAD_MODEL;
-  const wModel = overrides?.workerModel ?? DEFAULT_WORKER_MODEL;
+  const oModel = overrides?.orchestratorModel ?? envModelConfig();
+  const tlModel = overrides?.teamLeadModel ?? envModelConfig();
+  const wModel = overrides?.workerModel ?? envModelConfig();
 
   const teams: Record<string, TeamConfig> = {};
   for (const teamId of ["dev", "product", "marketing", "ops", "gtm"]) {

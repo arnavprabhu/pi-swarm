@@ -22,9 +22,8 @@ export type TeamId = "dev" | "product" | "marketing" | "ops" | "gtm" | (string &
 // ---------------------------------------------------------------------------
 
 /**
- * Model configuration — never hardcodes a provider.
- * Any provider supported by pi-ai's `getModel()` works:
- * "anthropic", "openai", "google", "groq", "mistral", etc.
+ * Model configuration — always read from .env or pi auth.
+ * Never hardcoded. Supports any provider pi-ai's `getModel()` accepts.
  */
 export interface ModelConfig {
   provider: KnownProvider;
