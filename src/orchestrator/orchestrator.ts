@@ -1,16 +1,12 @@
 /**
  * CEO / Orchestrator agent.
  *
- * The top-level agent that receives high-level directives, decomposes
- * them across teams, and coordinates the full orchestration cycle.
+ * Uses pi's createAgentSession for proper auth and model handling.
  */
 
-import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel } from "@mariozechner/pi-ai";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { CycleResult, SwarmConfig } from "../types.js";
-import { createOrchestratorTools } from "./tools.js";
-import { authenticatedStreamFn } from "../env.js";
+import { createSwarmSession } from "../session.js";
+import { createOrchestratorToolDefinitions } from "./tools.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
 import { randomUUID } from "node:crypto";
@@ -45,45 +41,6 @@ ${teamList || "Teams are configured dynamically. Use the delegate_task tool to a
 Be strategic. Not every task needs every team. Delegate precisely.`;
 }
 
-/** Extract the last assistant text and usage from agent transcript. */
-function extractOutput(agent: Agent): { text: string; inputTokens: number; outputTokens: number; cost: number; error?: string } {
-  const messages = agent.state.messages;
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cost = 0;
-
-  for (const msg of messages) {
-    if ("role" in msg && msg.role === "assistant") {
-      const am = msg as AssistantMessage;
-      if (am.usage) {
-        inputTokens += am.usage.input;
-        outputTokens += am.usage.output;
-        cost += (am.usage.cost?.input ?? 0) + (am.usage.cost?.output ?? 0);
-      }
-    }
-  }
-
-  const lastAssistant = [...messages].reverse().find(
-    (m) => "role" in m && m.role === "assistant",
-  ) as AssistantMessage | undefined;
-
-  let text = "";
-  let error: string | undefined;
-
-  if (lastAssistant) {
-    text = lastAssistant.content
-      .filter((b): b is { type: "text"; text: string } => b.type === "text")
-      .map((b) => b.text)
-      .join("");
-
-    if ((lastAssistant as any).stopReason === "error") {
-      error = (lastAssistant as any).errorMessage ?? "Unknown agent error";
-    }
-  }
-
-  return { text, inputTokens, outputTokens, cost, error };
-}
-
 /**
  * Run a full orchestration cycle.
  */
@@ -99,39 +56,48 @@ export async function runOrchestrationCycle(
   logger.info("orchestrator", "cycle_started", { cycleId, directive });
 
   const systemPrompt = buildOrchestratorPrompt(config);
-  const { tools, getDelegationResults } = createOrchestratorTools(config, costTracker);
+  const { tools: customTools, getDelegationResults } = createOrchestratorToolDefinitions(config, costTracker);
 
   const userMessage = context
     ? `${directive}\n\n## Additional Context\n${context}`
     : directive;
 
   try {
-    const model = (getModel as Function)(
-      config.orchestrator.model.provider,
-      config.orchestrator.model.model,
-    );
-
-    const agent = new Agent({
-      initialState: {
-        systemPrompt,
-        model,
-        tools,
-        thinkingLevel: config.orchestrator.model.thinkingLevel ?? "off",
-      },
-      streamFn: authenticatedStreamFn,
+    const session = await createSwarmSession({
+      agentId: "orchestrator",
+      systemPrompt,
+      model: config.orchestrator.model,
+      thinkingLevel: config.orchestrator.model.thinkingLevel ?? "off",
+      withCodingTools: false,
+      customTools,
     });
 
-    await agent.prompt(userMessage);
-    await agent.waitForIdle();
+    await session.prompt(userMessage);
+    await session.agent.waitForIdle();
 
-    const { text, inputTokens, outputTokens, cost: totalCost, error } = extractOutput(agent);
+    // Extract the last assistant message
+    const messages = session.agent.state.messages;
+    const lastMsg = [...messages].reverse().find(
+      (m) => "role" in m && m.role === "assistant",
+    ) as any;
 
-    // Log error but don't throw — the orchestrator may have partially completed
+    let text = "";
+    let error: string | undefined;
+
+    if (lastMsg) {
+      text = lastMsg.content
+        ?.filter((b: any) => b.type === "text")
+        .map((b: any) => b.text)
+        .join("") ?? "";
+
+      if (lastMsg.stopReason === "error") {
+        error = lastMsg.errorMessage ?? "Unknown error";
+      }
+    }
+
     if (error) {
       logger.error("orchestrator", "orchestrator_error", { error });
     }
-
-    costTracker.record("orchestrator", inputTokens, outputTokens, totalCost);
 
     const delegations = Array.from(getDelegationResults().values());
     const duration = Date.now() - startTime;

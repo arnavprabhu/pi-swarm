@@ -1,57 +1,15 @@
 /**
  * Team lead agent factory.
  *
- * Creates and runs a team lead (C-level) agent that can spawn workers,
- * coordinate team work, and report back to the orchestrator.
+ * Team leads use pi's createAgentSession with custom tools for
+ * spawning workers and reporting to the orchestrator.
  */
 
-import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel } from "@mariozechner/pi-ai";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { AgentConfig, AgentResult, ModelConfig, TeamId } from "../types.js";
-import { createTeamLeadTools } from "./tools.js";
-import { authenticatedStreamFn } from "../env.js";
+import { createSwarmSession } from "../session.js";
+import { createTeamLeadToolDefinitions } from "./tools.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
-
-/** Extract text and usage from agent transcript. */
-function extractOutput(agent: Agent): { text: string; inputTokens: number; outputTokens: number; cost: number; error?: string } {
-  const messages = agent.state.messages;
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cost = 0;
-
-  for (const msg of messages) {
-    if ("role" in msg && msg.role === "assistant") {
-      const am = msg as AssistantMessage;
-      if (am.usage) {
-        inputTokens += am.usage.input;
-        outputTokens += am.usage.output;
-        cost += (am.usage.cost?.input ?? 0) + (am.usage.cost?.output ?? 0);
-      }
-    }
-  }
-
-  const lastAssistant = [...messages].reverse().find(
-    (m) => "role" in m && m.role === "assistant",
-  ) as AssistantMessage | undefined;
-
-  let text = "";
-  let error: string | undefined;
-
-  if (lastAssistant) {
-    text = lastAssistant.content
-      .filter((b): b is { type: "text"; text: string } => b.type === "text")
-      .map((b) => b.text)
-      .join("");
-
-    if ((lastAssistant as any).stopReason === "error") {
-      error = (lastAssistant as any).errorMessage ?? "Unknown agent error";
-    }
-  }
-
-  return { text, inputTokens, outputTokens, cost, error };
-}
 
 /**
  * Run a team lead agent.
@@ -73,7 +31,7 @@ export async function runTeamLead(
     ? `${config.systemPrompt}\n\n## Orchestrator Context\n${context}`
     : config.systemPrompt;
 
-  const tools = createTeamLeadTools(
+  const customTools = createTeamLeadToolDefinitions(
     config.team as TeamId,
     config.id,
     wModel,
@@ -81,41 +39,52 @@ export async function runTeamLead(
   );
 
   try {
-    const model = (getModel as Function)(config.model.provider, config.model.model);
-
-    const agent = new Agent({
-      initialState: {
-        systemPrompt,
-        model,
-        tools,
-        thinkingLevel: config.model.thinkingLevel ?? "off",
-      },
-      streamFn: authenticatedStreamFn,
+    const session = await createSwarmSession({
+      agentId: config.id,
+      systemPrompt,
+      model: config.model,
+      thinkingLevel: config.model.thinkingLevel ?? "off",
+      withCodingTools: false,
+      customTools,
     });
 
-    await agent.prompt(directive);
-    await agent.waitForIdle();
+    await session.prompt(directive);
+    await session.agent.waitForIdle();
 
     const duration = Date.now() - startTime;
-    const { text, inputTokens, outputTokens, cost: totalCost, error } = extractOutput(agent);
+
+    // Extract the last assistant message
+    const messages = session.agent.state.messages;
+    const lastMsg = [...messages].reverse().find(
+      (m) => "role" in m && m.role === "assistant",
+    ) as any;
+
+    let text = "";
+    let error: string | undefined;
+
+    if (lastMsg) {
+      text = lastMsg.content
+        ?.filter((b: any) => b.type === "text")
+        .map((b: any) => b.text)
+        .join("") ?? "";
+
+      if (lastMsg.stopReason === "error") {
+        error = lastMsg.errorMessage ?? "Unknown error";
+      }
+    }
 
     if (error) {
       throw new Error(error);
     }
 
-    tracker.record(config.id, inputTokens, outputTokens, totalCost);
-
-    logger.info(config.id, "team_lead_completed", {
-      duration,
-      cost: tracker.totalCost,
-    });
+    logger.info(config.id, "team_lead_completed", { duration });
 
     return {
       agentId: config.id,
       success: true,
       output: text,
-      cost: { input: totalCost * 0.5, output: totalCost * 0.5, total: tracker.totalCost },
-      tokensUsed: { input: inputTokens, output: outputTokens },
+      cost: { input: 0, output: 0, total: tracker.totalCost },
+      tokensUsed: { input: 0, output: 0 },
       duration,
       toolCalls: [],
     };

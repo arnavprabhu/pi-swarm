@@ -1,43 +1,33 @@
 /**
  * Tools available to team-lead agents.
  *
- * These tools let team leads spawn workers and communicate results
- * back to the orchestrator.
+ * Uses pi's ToolDefinition format for proper integration with
+ * createAgentSession's custom tools system.
  */
 
 import { Type } from "@mariozechner/pi-ai";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { AgentConfig, AgentResult, ModelConfig, TeamId } from "../types.js";
+import { defineTool } from "@mariozechner/pi-coding-agent";
+import type { ModelConfig, AgentResult, TeamId } from "../types.js";
 import { runWorker } from "../worker/worker.js";
 import { getTeamWorkerRoles, workerRoleToConfig } from "../worker/roles.js";
 import { createReport } from "../protocol/messages.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
 
-/** Helper to create a text tool result. */
-function textResult(text: string) {
-  return { content: [{ type: "text" as const, text }], details: undefined };
-}
-
 /**
- * Create the set of tools for a team lead agent.
+ * Create tool definitions for a team lead agent.
  *
- * @param teamId - Which team this lead manages
- * @param leadId - The lead agent's ID (for message attribution)
- * @param workerModel - Model config to use for spawned workers
- * @param costTracker - Shared cost tracker
- * @returns Array of AgentTool definitions
+ * Returns pi ToolDefinition[] compatible with createAgentSession's customTools.
  */
-export function createTeamLeadTools(
+export function createTeamLeadToolDefinitions(
   teamId: TeamId,
   leadId: string,
   workerModel: ModelConfig,
   costTracker: CostTracker,
-): AgentTool<any, any>[] {
-  // Collect results from spawned workers
+) {
   const workerResults: AgentResult[] = [];
 
-  const spawnWorkerTool: AgentTool<any, any> = {
+  const spawnWorkerTool = defineTool({
     name: "spawn_worker",
     label: "Spawn Worker",
     description:
@@ -55,15 +45,16 @@ export function createTeamLeadTools(
         }),
       ),
     }),
-    execute: async (_toolCallId: string, args: { workerId: string; task: string; context?: string }) => {
+    execute: async (_toolCallId, args) => {
       const availableRoles = getTeamWorkerRoles(teamId);
       const role = availableRoles.find((r) => r.id === args.workerId);
 
       if (!role) {
         const available = availableRoles.map((r) => `${r.id} (${r.name})`).join(", ");
-        return textResult(
-          `Error: Worker role "${args.workerId}" not found for team "${teamId}". Available roles: ${available}`,
-        );
+        return {
+          content: [{ type: "text" as const, text: `Error: Worker role "${args.workerId}" not found for team "${teamId}". Available roles: ${available}` }],
+          details: undefined,
+        };
       }
 
       const workerConfig = workerRoleToConfig(role, workerModel);
@@ -72,64 +63,68 @@ export function createTeamLeadTools(
       const result = await runWorker(workerConfig, args.task, args.context, costTracker);
       workerResults.push(result);
 
-      return textResult(
-        result.success
-          ? `Worker ${role.name} completed successfully:\n${result.output}`
-          : `Worker ${role.name} failed: ${result.output}`,
-      );
+      return {
+        content: [{
+          type: "text" as const,
+          text: result.success
+            ? `Worker ${role.name} completed successfully:\n${result.output}`
+            : `Worker ${role.name} failed: ${result.output}`,
+        }],
+        details: undefined,
+      };
     },
-  };
+  });
 
-  const listWorkersTool: AgentTool<any, any> = {
+  const listWorkersTool = defineTool({
     name: "list_workers",
     label: "List Workers",
     description: "List all available worker roles for this team.",
     parameters: Type.Object({}),
     execute: async () => {
       const roles = getTeamWorkerRoles(teamId);
-      return textResult(roles.map((r) => `- ${r.id}: ${r.name} — ${r.role}`).join("\n"));
+      return {
+        content: [{ type: "text" as const, text: roles.map((r) => `- ${r.id}: ${r.name} — ${r.role}`).join("\n") }],
+        details: undefined,
+      };
     },
-  };
+  });
 
-  const reportToOrchestratorTool: AgentTool<any, any> = {
+  const reportTool = defineTool({
     name: "report_to_orchestrator",
     label: "Report to Orchestrator",
-    description:
-      "Send a structured report back to the orchestrator summarizing your team's work and findings.",
+    description: "Send a structured report back to the orchestrator summarizing your team's work.",
     parameters: Type.Object({
-      summary: Type.String({
-        description: "A one-line summary of the team's work",
-      }),
-      body: Type.String({
-        description: "Detailed report of what was accomplished, decisions made, and any blockers",
-      }),
+      summary: Type.String({ description: "A one-line summary of the team's work" }),
+      body: Type.String({ description: "Detailed report of accomplishments, decisions, and blockers" }),
     }),
-    execute: async (_toolCallId: string, args: { summary: string; body: string }) => {
+    execute: async (_toolCallId, args) => {
       const message = createReport(leadId, "orchestrator", args.summary, args.body, "");
       logger.info(leadId, "report_sent", { summary: args.summary });
-      return textResult(`Report sent to orchestrator: ${message.id}\nSummary: ${args.summary}`);
+      return {
+        content: [{ type: "text" as const, text: `Report sent: ${args.summary}` }],
+        details: undefined,
+      };
     },
-  };
+  });
 
-  const getWorkerResultsTool: AgentTool<any, any> = {
+  const getResultsTool = defineTool({
     name: "get_worker_results",
     label: "Get Worker Results",
     description: "Retrieve the results from all workers spawned during this session.",
     parameters: Type.Object({}),
     execute: async () => {
       if (workerResults.length === 0) {
-        return textResult("No workers have been spawned yet.");
+        return { content: [{ type: "text" as const, text: "No workers have been spawned yet." }], details: undefined };
       }
-      return textResult(
-        workerResults
-          .map(
-            (r) =>
-              `[${r.success ? "OK" : "FAIL"}] ${r.agentId}: ${r.output.slice(0, 500)}${r.output.length > 500 ? "..." : ""}`,
-          )
-          .join("\n\n"),
-      );
+      const text = workerResults
+        .map((r) => `[${r.success ? "OK" : "FAIL"}] ${r.agentId}: ${r.output.slice(0, 500)}${r.output.length > 500 ? "..." : ""}`)
+        .join("\n\n");
+      return { content: [{ type: "text" as const, text }], details: undefined };
     },
-  };
+  });
 
-  return [spawnWorkerTool, listWorkersTool, reportToOrchestratorTool, getWorkerResultsTool];
+  return [spawnWorkerTool, listWorkersTool, reportTool, getResultsTool];
 }
+
+// Keep backward compat export name
+export const createTeamLeadTools = createTeamLeadToolDefinitions;
