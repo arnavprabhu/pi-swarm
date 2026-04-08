@@ -72,6 +72,9 @@ export { Logger, logger } from "./utils/logger.js";
 export { CostTracker } from "./utils/cost-tracker.js";
 export type { CostEntry } from "./utils/cost-tracker.js";
 
+// Environment
+export { resolveApiKey, envModelConfig, ENV_PROVIDER, ENV_MODEL } from "./env.js";
+
 // ---------------------------------------------------------------------------
 // Swarm — High-level convenience class
 // ---------------------------------------------------------------------------
@@ -79,6 +82,7 @@ export type { CostEntry } from "./utils/cost-tracker.js";
 import type { CycleResult, SwarmConfig, ModelConfig } from "./types.js";
 import { createDefaultConfig } from "./config.js";
 import { runOrchestrationCycle } from "./orchestrator/orchestrator.js";
+import { envModelConfig } from "./env.js";
 
 export interface SwarmOptions {
   /** Name for this swarm. Default: "Pi Swarm" */
@@ -109,10 +113,12 @@ export class Swarm {
     if (options?.config) {
       this.config = options.config;
     } else {
+      // Use env defaults (from .env file) when no model config is provided
+      const defaultModel = envModelConfig();
       this.config = createDefaultConfig(options?.name, {
-        orchestratorModel: options?.orchestratorModel,
-        teamLeadModel: options?.teamLeadModel,
-        workerModel: options?.workerModel,
+        orchestratorModel: options?.orchestratorModel ?? defaultModel,
+        teamLeadModel: options?.teamLeadModel ?? defaultModel,
+        workerModel: options?.workerModel ?? defaultModel,
         costBudget: options?.costBudget,
         maxConcurrentAgents: options?.maxConcurrentAgents,
       });

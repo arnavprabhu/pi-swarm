@@ -1,8 +1,10 @@
 /**
  * Full company simulation example.
  *
- * Spins up the complete 5-team hierarchy with all 22 worker roles.
+ * Spins up the complete 5-team hierarchy with all 21 worker roles.
  * The CEO delegates quarterly OKRs, and all teams execute in parallel.
+ *
+ * Uses the provider and model from your .env file.
  *
  * Usage:
  *   npx tsx examples/full-company.ts
@@ -11,25 +13,15 @@
 import { Swarm } from "../src/index.js";
 
 async function main() {
-  // Full company with all default teams
+  // Full company with all default teams — reads from .env
   const swarm = new Swarm({
     name: "Acme Corp",
-    orchestratorModel: {
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
-      thinkingLevel: "medium",
-    },
-    teamLeadModel: {
-      provider: "openai",
-      model: "gpt-4o",
-    },
-    workerModel: {
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
-    },
-    costBudget: 5.0, // $5 budget for a full company cycle
+    costBudget: 5.0,
   });
 
+  const config = swarm.getConfig();
+  console.log(`Provider: ${config.defaults.orchestratorModel.provider}`);
+  console.log(`Model: ${config.defaults.orchestratorModel.model}`);
   console.log("=== Acme Corp — Q2 Planning Cycle ===\n");
 
   const result = await swarm.run(

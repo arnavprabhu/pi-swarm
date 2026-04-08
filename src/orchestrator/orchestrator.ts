@@ -10,6 +10,7 @@ import { getModel, streamSimple } from "@mariozechner/pi-ai";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { CycleResult, SwarmConfig } from "../types.js";
 import { createOrchestratorTools } from "./tools.js";
+import { resolveApiKey } from "../env.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
 import { randomUUID } from "node:crypto";
@@ -53,37 +54,36 @@ function extractOutput(agent: Agent): { text: string; inputTokens: number; outpu
 
   for (const msg of messages) {
     if ("role" in msg && msg.role === "assistant") {
-      const assistantMsg = msg as AssistantMessage;
-      if (assistantMsg.usage) {
-        inputTokens += assistantMsg.usage.input;
-        outputTokens += assistantMsg.usage.output;
-        cost += (assistantMsg.usage.cost?.input ?? 0) + (assistantMsg.usage.cost?.output ?? 0);
+      const am = msg as AssistantMessage;
+      if (am.usage) {
+        inputTokens += am.usage.input;
+        outputTokens += am.usage.output;
+        cost += (am.usage.cost?.input ?? 0) + (am.usage.cost?.output ?? 0);
       }
     }
   }
 
-  // Use the last assistant message text as the final output
   const lastAssistant = [...messages].reverse().find(
     (m) => "role" in m && m.role === "assistant",
   ) as AssistantMessage | undefined;
 
-  const text = lastAssistant
-    ? lastAssistant.content
-        .filter((b): b is { type: "text"; text: string } => b.type === "text")
-        .map((b) => b.text)
-        .join("")
-    : "";
+  let text = "";
+  if (lastAssistant) {
+    text = lastAssistant.content
+      .filter((b): b is { type: "text"; text: string } => b.type === "text")
+      .map((b) => b.text)
+      .join("");
+
+    if ((lastAssistant as any).stopReason === "error") {
+      throw new Error((lastAssistant as any).errorMessage ?? "Unknown agent error");
+    }
+  }
 
   return { text, inputTokens, outputTokens, cost };
 }
 
 /**
  * Run a full orchestration cycle.
- *
- * @param config - Swarm configuration
- * @param directive - The high-level task to orchestrate
- * @param context - Optional additional context
- * @returns CycleResult with all delegation results and costs
  */
 export async function runOrchestrationCycle(
   config: SwarmConfig,
@@ -118,6 +118,7 @@ export async function runOrchestrationCycle(
         thinkingLevel: config.orchestrator.model.thinkingLevel ?? "off",
       },
       streamFn: streamSimple,
+      getApiKey: resolveApiKey,
     });
 
     await agent.prompt(userMessage);

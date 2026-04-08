@@ -7,31 +7,45 @@
 
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel, streamSimple } from "@mariozechner/pi-ai";
+import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { AgentConfig, AgentResult } from "../types.js";
+import { resolveApiKey } from "../env.js";
 import { logger } from "../utils/logger.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 
-/** Extract text content from the last assistant message in an Agent's state. */
-function extractAgentOutput(agent: Agent): { text: string; inputTokens: number; outputTokens: number; cost: number } {
+/** Extract text and usage from the agent transcript. */
+function extractOutput(agent: Agent): { text: string; inputTokens: number; outputTokens: number; cost: number } {
   const messages = agent.state.messages;
-  let text = "";
   let inputTokens = 0;
   let outputTokens = 0;
   let cost = 0;
+  let text = "";
 
   for (const msg of messages) {
     if ("role" in msg && msg.role === "assistant") {
-      const assistantMsg = msg as import("@mariozechner/pi-ai").AssistantMessage;
-      for (const block of assistantMsg.content) {
-        if (block.type === "text") {
-          text += block.text;
-        }
+      const am = msg as AssistantMessage;
+      if (am.usage) {
+        inputTokens += am.usage.input;
+        outputTokens += am.usage.output;
+        cost += (am.usage.cost?.input ?? 0) + (am.usage.cost?.output ?? 0);
       }
-      if (assistantMsg.usage) {
-        inputTokens += assistantMsg.usage.input;
-        outputTokens += assistantMsg.usage.output;
-        cost += (assistantMsg.usage.cost?.input ?? 0) + (assistantMsg.usage.cost?.output ?? 0);
-      }
+    }
+  }
+
+  // Use the last assistant text as output
+  const lastAssistant = [...messages].reverse().find(
+    (m) => "role" in m && m.role === "assistant",
+  ) as AssistantMessage | undefined;
+
+  if (lastAssistant) {
+    text = lastAssistant.content
+      .filter((b): b is { type: "text"; text: string } => b.type === "text")
+      .map((b) => b.text)
+      .join("");
+
+    // Check for error
+    if ((lastAssistant as any).stopReason === "error") {
+      throw new Error((lastAssistant as any).errorMessage ?? "Unknown agent error");
     }
   }
 
@@ -40,12 +54,6 @@ function extractAgentOutput(agent: Agent): { text: string; inputTokens: number; 
 
 /**
  * Run an ephemeral worker agent.
- *
- * @param config - The worker's configuration (role, model, system prompt, etc.)
- * @param task - The task to execute (becomes the user message)
- * @param context - Additional context to prepend to the system prompt
- * @param costTracker - Optional cost tracker to record spend
- * @returns AgentResult with the worker's output
  */
 export async function runWorker(
   config: AgentConfig,
@@ -54,7 +62,6 @@ export async function runWorker(
   costTracker?: CostTracker,
 ): Promise<AgentResult> {
   const startTime = Date.now();
-  const toolCalls: AgentResult["toolCalls"] = [];
 
   logger.info(config.id, "worker_spawned", { name: config.name, role: config.role });
 
@@ -70,18 +77,18 @@ export async function runWorker(
       initialState: {
         systemPrompt,
         model,
-        tools: [], // Workers get no tools by default — they reason and produce text
+        tools: [],
         thinkingLevel: config.model.thinkingLevel ?? "off",
       },
       streamFn: streamSimple,
+      getApiKey: resolveApiKey,
     });
 
-    // Run the agent with the task as the user message
     await agent.prompt(task);
     await agent.waitForIdle();
 
     const duration = Date.now() - startTime;
-    const { text, inputTokens, outputTokens, cost: totalCost } = extractAgentOutput(agent);
+    const { text, inputTokens, outputTokens, cost: totalCost } = extractOutput(agent);
 
     if (costTracker) {
       costTracker.record(config.id, inputTokens, outputTokens, totalCost);
@@ -98,14 +105,10 @@ export async function runWorker(
       agentId: config.id,
       success: true,
       output: text,
-      cost: {
-        input: totalCost * 0.5, // approximate split
-        output: totalCost * 0.5,
-        total: totalCost,
-      },
+      cost: { input: totalCost * 0.5, output: totalCost * 0.5, total: totalCost },
       tokensUsed: { input: inputTokens, output: outputTokens },
       duration,
-      toolCalls,
+      toolCalls: [],
     };
   } catch (error) {
     const duration = Date.now() - startTime;
@@ -120,7 +123,7 @@ export async function runWorker(
       cost: { input: 0, output: 0, total: 0 },
       tokensUsed: { input: 0, output: 0 },
       duration,
-      toolCalls,
+      toolCalls: [],
     };
   }
 }

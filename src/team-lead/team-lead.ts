@@ -10,42 +10,42 @@ import { getModel, streamSimple } from "@mariozechner/pi-ai";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { AgentConfig, AgentResult, ModelConfig, TeamId } from "../types.js";
 import { createTeamLeadTools } from "./tools.js";
+import { resolveApiKey } from "../env.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
 
 /** Extract text and usage from agent transcript. */
 function extractOutput(agent: Agent): { text: string; inputTokens: number; outputTokens: number; cost: number } {
   const messages = agent.state.messages;
-  let text = "";
   let inputTokens = 0;
   let outputTokens = 0;
   let cost = 0;
 
   for (const msg of messages) {
     if ("role" in msg && msg.role === "assistant") {
-      const assistantMsg = msg as AssistantMessage;
-      for (const block of assistantMsg.content) {
-        if (block.type === "text") text += block.text;
-      }
-      if (assistantMsg.usage) {
-        inputTokens += assistantMsg.usage.input;
-        outputTokens += assistantMsg.usage.output;
-        cost += (assistantMsg.usage.cost?.input ?? 0) + (assistantMsg.usage.cost?.output ?? 0);
+      const am = msg as AssistantMessage;
+      if (am.usage) {
+        inputTokens += am.usage.input;
+        outputTokens += am.usage.output;
+        cost += (am.usage.cost?.input ?? 0) + (am.usage.cost?.output ?? 0);
       }
     }
   }
 
-  // Use the last assistant text block as the final output
   const lastAssistant = [...messages].reverse().find(
     (m) => "role" in m && m.role === "assistant",
   ) as AssistantMessage | undefined;
 
+  let text = "";
   if (lastAssistant) {
-    const lastText = lastAssistant.content
+    text = lastAssistant.content
       .filter((b): b is { type: "text"; text: string } => b.type === "text")
       .map((b) => b.text)
       .join("");
-    if (lastText) text = lastText;
+
+    if ((lastAssistant as any).stopReason === "error") {
+      throw new Error((lastAssistant as any).errorMessage ?? "Unknown agent error");
+    }
   }
 
   return { text, inputTokens, outputTokens, cost };
@@ -53,9 +53,6 @@ function extractOutput(agent: Agent): { text: string; inputTokens: number; outpu
 
 /**
  * Run a team lead agent.
- *
- * The team lead receives a directive, decomposes it into worker tasks,
- * spawns workers, and synthesizes their results into a report.
  */
 export async function runTeamLead(
   config: AgentConfig,
@@ -93,6 +90,7 @@ export async function runTeamLead(
         thinkingLevel: config.model.thinkingLevel ?? "off",
       },
       streamFn: streamSimple,
+      getApiKey: resolveApiKey,
     });
 
     await agent.prompt(directive);
@@ -112,11 +110,7 @@ export async function runTeamLead(
       agentId: config.id,
       success: true,
       output: text,
-      cost: {
-        input: totalCost * 0.5,
-        output: totalCost * 0.5,
-        total: tracker.totalCost,
-      },
+      cost: { input: totalCost * 0.5, output: totalCost * 0.5, total: tracker.totalCost },
       tokensUsed: { input: inputTokens, output: outputTokens },
       duration,
       toolCalls: [],

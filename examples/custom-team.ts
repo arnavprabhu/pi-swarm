@@ -5,29 +5,17 @@
  * roles, and model assignments — not limited to the built-in
  * company structure.
  *
+ * Uses the provider and model from your .env file for all agents.
+ *
  * Usage:
  *   npx tsx examples/custom-team.ts
  */
 
-import { Swarm } from "../src/index.js";
-import type { SwarmConfig, TeamConfig, AgentConfig, ModelConfig } from "../src/types.js";
+import { Swarm, envModelConfig } from "../src/index.js";
+import type { SwarmConfig, TeamConfig } from "../src/types.js";
 
-// Define your own models per tier
-const orchestratorModel: ModelConfig = {
-  provider: "google",
-  model: "gemini-2.5-pro",
-  thinkingLevel: "medium",
-};
-
-const leadModel: ModelConfig = {
-  provider: "openai",
-  model: "gpt-4o",
-};
-
-const workerModel: ModelConfig = {
-  provider: "groq",
-  model: "llama-3.3-70b-versatile",
-};
+// Read model config from .env
+const model = envModelConfig();
 
 // Define custom teams
 const researchTeam: TeamConfig = {
@@ -41,7 +29,7 @@ const researchTeam: TeamConfig = {
       "You are the Research Director. You lead a team of research specialists. " +
       "You decompose research questions, delegate to analysts, and synthesize findings " +
       "into actionable insights.",
-    model: leadModel,
+    model,
     maxTurns: 8,
   },
   workers: [
@@ -54,7 +42,7 @@ const researchTeam: TeamConfig = {
       systemPrompt:
         "You are a market researcher. You analyze market trends, competitor landscapes, " +
         "TAM/SAM/SOM, and produce data-driven market analyses.",
-      model: workerModel,
+      model,
       maxTurns: 3,
     },
     {
@@ -66,7 +54,7 @@ const researchTeam: TeamConfig = {
       systemPrompt:
         "You are an academic researcher. You review literature, summarize papers, " +
         "identify key findings, and evaluate research methodologies.",
-      model: workerModel,
+      model,
       maxTurns: 3,
     },
   ],
@@ -83,7 +71,7 @@ const designTeam: TeamConfig = {
       "You are the Design Director. You lead a team of designers. " +
       "You create design strategies, delegate specific design tasks, and ensure " +
       "visual consistency and quality across all deliverables.",
-    model: leadModel,
+    model,
     maxTurns: 8,
   },
   workers: [
@@ -96,7 +84,7 @@ const designTeam: TeamConfig = {
       systemPrompt:
         "You are a UI designer. You create interface mockups, component designs, " +
         "and interaction specifications with attention to usability and aesthetics.",
-      model: workerModel,
+      model,
       maxTurns: 3,
     },
   ],
@@ -111,7 +99,7 @@ const customConfig: SwarmConfig = {
     tier: "orchestrator",
     role: "studio_lead",
     systemPrompt: "", // Built dynamically by the orchestrator
-    model: orchestratorModel,
+    model,
     maxTurns: 15,
   },
   teams: {
@@ -119,9 +107,9 @@ const customConfig: SwarmConfig = {
     design: designTeam,
   },
   defaults: {
-    orchestratorModel,
-    teamLeadModel: leadModel,
-    workerModel,
+    orchestratorModel: model,
+    teamLeadModel: model,
+    workerModel: model,
   },
   costBudget: 2.0,
 };
@@ -129,6 +117,8 @@ const customConfig: SwarmConfig = {
 async function main() {
   const swarm = new Swarm({ config: customConfig });
 
+  console.log(`Provider: ${model.provider}`);
+  console.log(`Model: ${model.model}`);
   console.log("=== Custom Team: Research & Design Studio ===\n");
 
   const result = await swarm.run(

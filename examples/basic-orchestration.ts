@@ -1,8 +1,8 @@
 /**
  * Basic orchestration example.
  *
- * Creates a minimal swarm with CEO + CTO + 2 dev workers,
- * delegates a simple coding task, and displays the result.
+ * Uses the provider and model from your .env file.
+ * No hardcoded API keys or model names.
  *
  * Usage:
  *   npx tsx examples/basic-orchestration.ts
@@ -11,26 +11,15 @@
 import { Swarm } from "../src/index.js";
 
 async function main() {
-  // Create a minimal swarm — only the dev team
+  // Create a swarm — reads PROVIDER and MODEL from .env automatically
   const swarm = new Swarm({
     name: "Small Dev Team",
-    // Use any provider/model you have API keys for:
-    orchestratorModel: {
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
-      thinkingLevel: "low",
-    },
-    teamLeadModel: {
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
-    },
-    workerModel: {
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
-    },
     costBudget: 1.0, // $1 max
   });
 
+  const config = swarm.getConfig();
+  console.log(`Provider: ${config.defaults.orchestratorModel.provider}`);
+  console.log(`Model: ${config.defaults.orchestratorModel.model}`);
   console.log("Starting basic orchestration...\n");
 
   const result = await swarm.run(
