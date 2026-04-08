@@ -2,7 +2,26 @@
 
 Multi-agent orchestration framework built on [pi.dev](https://shittycodingagent.ai).
 
-pi-swarm organizes AI agents into a hierarchical company structure — an orchestrator (CEO) delegates to team leads (C-level), who spawn specialist workers. It's **AI model agnostic**: use Anthropic, OpenAI, Google, Groq, Mistral, or any provider that pi-ai supports.
+pi-swarm organizes AI agents into a hierarchical company structure — an orchestrator (CEO) delegates to team leads (C-level), who spawn specialist workers. It uses pi's auth system and works with any provider pi supports: Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter, and more.
+
+```
+[Orchestrator] Build a REST API for user management...
+
+[Orchestrator] → Delegating to CTO (dev)...
+  [CTO] Spawning Backend Engineer...
+  [CTO] Spawning QA Engineer...
+    [Backend Engineer] ✓ Complete (7.2s) (4141 chars)
+    [QA Engineer] ✓ Complete (14.0s) (10052 chars)
+  [CTO] ✓ Complete (32.3s)
+
+[Orchestrator] ✓ Cycle complete (65.2s, 1 team)
+
+Dev Team | 429d8097-929 | 65.2s | total: $0.0023
+◆ Orchestrator 💰 $0.0023 gemini-3-flash-preview 65.2s
+└── ◆ CTO 💰 $0.0000 gemini-3-flash-preview 32.3s
+    ├── ◆ Backend Engineer 💰 $0.0000 gemini-3-flash-preview 7.2s
+    └── ◆ QA Engineer 💰 $0.0000 gemini-3-flash-preview 14.0s
+```
 
 ## Architecture
 
@@ -28,34 +47,46 @@ pi-swarm organizes AI agents into a hierarchical company structure — an orches
 - **Ops**: Finance, HR, Legal, Operations
 - **GTM**: Sales, Customer Success, Solutions Eng, Partnerships
 
-## Quick Start
+---
 
-### 1. Setup
+## Setup
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org) 18+
+- [pi CLI](https://shittycodingagent.ai) installed and authenticated (`pi /login`)
+
+### Install
 
 ```bash
 git clone https://github.com/arnavprabhu/pi-swarm.git
 cd pi-swarm
 npm install
+npm run build
 ```
 
-### 2. Configure your API key
+### Authentication
+
+pi-swarm uses pi's own auth system. If you've already run `pi /login`, you're set — pi-swarm reads from the same `~/.pi/agent/auth.json` file.
+
+**Fallback: environment variables.** If you haven't set up pi auth, copy the env template:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and set your provider, model, and API key. Example for Gemini:
+Edit `.env` with your provider and API key:
 
 ```env
 PROVIDER=google
-MODEL=gemini-2.5-flash
+MODEL=gemini-3-flash-preview
 GEMINI_API_KEY=your-key-here
 ```
 
-Supported env vars per provider:
+Supported providers:
 
-| Provider | Env Var | Key Source |
-|----------|---------|------------|
+| Provider | Env Var | Get a Key |
+|----------|---------|-----------|
 | Google Gemini | `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 | OpenAI | `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 | Anthropic | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
@@ -64,183 +95,262 @@ Supported env vars per provider:
 | Mistral | `MISTRAL_API_KEY` | [console.mistral.ai](https://console.mistral.ai/api-keys) |
 | xAI | `XAI_API_KEY` | [console.x.ai](https://console.x.ai) |
 
-### 3. Build & Run
+### Run an example
 
 ```bash
-npm run build
 npx tsx examples/basic-orchestration.ts
 ```
 
-### As a Pi Extension
+---
+
+## Using pi-swarm in Your Project
+
+### Option A: Add to an existing codebase
+
+From your project root:
 
 ```bash
-pi -e ./dist/extension.js
+# Install pi-swarm and its peer dependencies
+npm install @mariozechner/pi-ai @mariozechner/pi-agent-core @mariozechner/pi-coding-agent dotenv
 
-# Then use in pi:
-/swarm Plan the Q2 product launch
-/swarm-config
+# Copy pi-swarm's source into your project (or reference it as a local dep)
+cp -r /path/to/pi-swarm/src ./lib/pi-swarm
 ```
 
-### As an SDK
+Or add it as a git dependency in your `package.json`:
+
+```json
+{
+  "dependencies": {
+    "pi-swarm": "github:arnavprabhu/pi-swarm"
+  }
+}
+```
+
+Then use it:
 
 ```typescript
 import { Swarm } from "pi-swarm";
 
-// Reads PROVIDER and MODEL from .env automatically
+const swarm = new Swarm({ name: "My Project" });
+const result = await swarm.run("Review the authentication module and suggest improvements");
+console.log(result.companyStatus);
+```
+
+### Option B: Start a new project with pi-swarm
+
+```bash
+mkdir my-agent-team && cd my-agent-team
+npm init -y
+npm install @mariozechner/pi-ai @mariozechner/pi-agent-core @mariozechner/pi-coding-agent dotenv
+
+# Clone pi-swarm as a subdirectory
+git clone https://github.com/arnavprabhu/pi-swarm.git
+```
+
+Create your orchestration script:
+
+```typescript
+// orchestrate.ts
+import { Swarm } from "./pi-swarm/src/index.js";
+
+const swarm = new Swarm({
+  name: "My Startup",
+  costBudget: 5.0,
+});
+
+const result = await swarm.run(
+  "Plan and build a landing page with email signup, A/B testing, and analytics integration"
+);
+```
+
+Run it:
+
+```bash
+npx tsx orchestrate.ts
+```
+
+### Option C: Use as a Pi Extension
+
+Load pi-swarm directly in pi's CLI:
+
+```bash
+cd your-project
+pi -e /path/to/pi-swarm/dist/extension.js
+```
+
+Then in pi:
+
+```
+/swarm Plan the Q2 product launch
+/swarm-config
+```
+
+---
+
+## Examples
+
+### Basic Orchestration
+
+Single dev task — CEO delegates to CTO, who spawns backend + QA workers:
+
+```bash
+npx tsx examples/basic-orchestration.ts
+```
+
+### Full Company
+
+All 5 teams engaged on quarterly planning (dev, product, marketing, ops, GTM):
+
+```bash
+npx tsx examples/full-company.ts
+```
+
+### Custom Teams
+
+Define your own teams (research + design studio) with custom roles:
+
+```bash
+npx tsx examples/custom-team.ts
+```
+
+---
+
+## SDK Reference
+
+### `Swarm`
+
+```typescript
+import { Swarm } from "pi-swarm";
+
+// Reads PROVIDER and MODEL from .env / pi auth automatically
 const swarm = new Swarm({ name: "My Company", costBudget: 2.0 });
 
+// Run with live progress UI and team tree
 const result = await swarm.run("Build a REST API for user management");
-console.log(result.companyStatus);
-console.log(`Cost: $${result.totalCost.toFixed(4)}`);
+
+// Disable UI (for programmatic use)
+const result = await swarm.run("Analyze this", undefined, { showProgress: false, showTree: false });
 ```
 
-Or override models per tier:
+### Model Configuration
+
+Override models per tier — use a powerful model for the orchestrator, balanced for leads, cheap for workers:
 
 ```typescript
 const swarm = new Swarm({
-  name: "My Company",
-  orchestratorModel: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+  orchestratorModel: { provider: "anthropic", model: "claude-sonnet-4-20250514", thinkingLevel: "medium" },
   teamLeadModel:     { provider: "openai",    model: "gpt-4o" },
   workerModel:       { provider: "groq",      model: "llama-3.3-70b-versatile" },
-  costBudget: 2.0,
-});
-```
-
-## Model Agnostic
-
-Every agent's model is configurable — orchestrator, team leads, and workers can each use a different provider and model. Mix and match based on capability needs and cost:
-
-```typescript
-const swarm = new Swarm({
-  // Powerful model for strategic thinking
-  orchestratorModel: { provider: "anthropic", model: "claude-sonnet-4-20250514", thinkingLevel: "medium" },
-  // Balanced model for team coordination
-  teamLeadModel: { provider: "openai", model: "gpt-4o" },
-  // Fast/cheap model for atomic tasks
-  workerModel: { provider: "groq", model: "llama-3.3-70b-versatile" },
-});
-```
-
-## Configuration
-
-### Default Config
-
-```typescript
-import { createDefaultConfig } from "pi-swarm";
-
-// Creates a full 5-team config with all 22 workers
-const config = createDefaultConfig("Acme Corp", {
-  orchestratorModel: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
-  teamLeadModel: { provider: "openai", model: "gpt-4o" },
-  workerModel: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
-  costBudget: 5.0,
 });
 ```
 
 ### Custom Teams
 
-Define your own teams with custom roles (see `examples/custom-team.ts`):
+Not limited to the built-in company structure — define your own:
 
 ```typescript
 import { Swarm } from "pi-swarm";
 import type { SwarmConfig, TeamConfig } from "pi-swarm";
 
-const researchTeam: TeamConfig = {
+const securityTeam: TeamConfig = {
   lead: {
-    id: "research-director",
-    name: "Research Director",
-    tier: "team-lead",
-    team: "research",
-    role: "research_director",
-    systemPrompt: "You are the Research Director...",
-    model: { provider: "openai", model: "gpt-4o" },
+    id: "security-lead", name: "Security Lead", tier: "team-lead",
+    team: "security", role: "security_lead",
+    systemPrompt: "You lead the security team. Delegate vulnerability analysis and pen testing to your workers.",
+    model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
   },
   workers: [
     {
-      id: "analyst",
-      name: "Research Analyst",
-      tier: "worker",
-      team: "research",
-      role: "analyst",
-      systemPrompt: "You are a research analyst...",
-      model: { provider: "groq", model: "llama-3.3-70b-versatile" },
+      id: "pen-tester", name: "Pen Tester", tier: "worker",
+      team: "security", role: "pen_tester",
+      systemPrompt: "You are a penetration tester. Find vulnerabilities and suggest fixes.",
+      model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
     },
   ],
 };
+```
 
-const swarm = new Swarm({
-  config: {
-    name: "Research Lab",
-    orchestrator: { /* ... */ },
-    teams: { research: researchTeam },
-    defaults: { /* ... */ },
-  },
+### UI Controls
+
+```typescript
+// Full UI (default)
+await swarm.run("task");
+
+// No progress output, just the tree
+await swarm.run("task", undefined, { showProgress: false });
+
+// Silent mode — no UI at all
+await swarm.run("task", undefined, { showProgress: false, showTree: false });
+
+// Keep JSONL logger alongside progress UI
+await swarm.run("task", undefined, { suppressLogger: false });
+```
+
+### Lower-Level APIs
+
+```typescript
+import { createSwarmAgent, runOneShot, CycleTracker, ProgressLogger, printTree } from "pi-swarm";
+
+// Create a single pi-authenticated agent
+const agent = createSwarmAgent({
+  agentId: "my-agent",
+  systemPrompt: "You are a code reviewer.",
+  model: { provider: "google", model: "gemini-3-flash-preview" },
 });
+
+// One-shot prompt
+const { text, success } = await runOneShot(
+  { agentId: "reviewer", systemPrompt: "Review code for bugs.", model: myModel },
+  "Review this function: ..."
+);
 ```
 
-## API Reference
+---
 
-### `Swarm`
+## How It Works
 
-The main entry point for SDK usage.
+### Agent Lifecycle
 
-| Method | Description |
-|--------|-------------|
-| `new Swarm(options?)` | Create a swarm with optional config overrides |
-| `swarm.run(directive, context?)` | Run a full orchestration cycle |
-| `swarm.getConfig()` | Get the current configuration |
+1. **You send a directive** to the `Swarm`
+2. **Orchestrator (CEO)** analyzes the task, decides which teams to involve
+3. **Orchestrator calls `delegate_task`** or `broadcast` — team leads are spawned
+4. **Team leads** receive the directive, decompose it, and call `spawn_worker` for each subtask
+5. **Workers** execute their task and return text output to the team lead
+6. **Team leads** synthesize worker outputs and report back to the orchestrator
+7. **Orchestrator** calls `finish_cycle` with a summary
+8. **Tree renders** showing every agent, its status, cost, model, and duration
 
-### `runOrchestrationCycle(config, directive, context?)`
+### Auth Chain
 
-Low-level function to run an orchestration cycle with a full `SwarmConfig`.
+pi-swarm resolves API keys in this order:
 
-### `runTeamLead(config, directive, context?, workerModel?, costTracker?)`
+1. **Pi's AuthStorage** — `~/.pi/agent/auth.json` (from `pi /login`)
+2. **ModelRegistry** — custom provider configs
+3. **Environment variables** — `GEMINI_API_KEY`, `OPENAI_API_KEY`, etc. (from `.env`)
 
-Run a single team lead agent with its workers.
+If you've authenticated via pi, everything just works. The `.env` fallback is there for environments without pi installed.
 
-### `runWorker(config, task, context?, costTracker?)`
+### Tools
 
-Run an ephemeral worker agent.
+Each agent tier has different tools:
 
-### Message Protocol
+| Tier | Tools |
+|------|-------|
+| Orchestrator | `delegate_task`, `broadcast`, `collect_reports`, `finish_cycle` |
+| Team Leads | `spawn_worker`, `list_workers`, `report_to_orchestrator`, `get_worker_results` |
+| Workers | None (text-only reasoning agents) |
 
-```typescript
-import { createDirective, createReport, createEscalation, createRequest } from "pi-swarm";
-import { ThreadTracker } from "pi-swarm";
-
-const tracker = new ThreadTracker();
-const directive = createDirective("ceo", "cto", "Build the API", "Full details...");
-tracker.track(directive);
-```
-
-### Routing
-
-```typescript
-import { findRoutes, resolvePath, ROUTING_RULES } from "pi-swarm";
-
-const path = resolvePath("new feature");
-// → ["orchestrator", "product", "dev"]
-```
-
-### Cost Tracking
-
-```typescript
-import { CostTracker } from "pi-swarm";
-
-const tracker = new CostTracker(5.0); // $5 budget
-tracker.record("cto", 1000, 500, 0.02);
-console.log(tracker.summary());
-console.log(tracker.isOverBudget); // false
-```
+---
 
 ## Design Principles
 
-1. **Model agnostic** — Any LLM provider that pi-ai supports. Config-driven model selection per tier.
-2. **Curated context** — Following the [AOrchestra](https://arxiv.org/abs/2501.09475) 4-tuple pattern `(Instruction, Context, Tools, Model)`, each sub-agent receives only the context it needs.
-3. **Observable** — Every agent action is logged. JSONL-compatible output for replay and debugging.
-4. **Ephemeral workers** — Workers are stateless and disposable. Only the orchestrator maintains persistent state across cycles.
-5. **Composable** — Define custom teams, custom roles, and custom tools. Not limited to the built-in company structure.
-6. **Cost-aware** — Track and optionally limit spending per orchestration cycle.
+1. **Model agnostic** — Any provider pi-ai supports. Config-driven model selection per agent tier.
+2. **Pi-native auth** — Uses pi's own auth system. No separate key management.
+3. **Observable** — Live progress UI with colored output + team tree visualization.
+4. **Ephemeral workers** — Workers are stateless and disposable. No session persistence overhead.
+5. **Composable** — Define custom teams, roles, and system prompts. Not locked to the built-in structure.
+6. **Cost-aware** — Per-cycle budget limits. Cost tracking across all agents.
 
 ## Project Structure
 
@@ -248,33 +358,40 @@ console.log(tracker.isOverBudget); // false
 pi-swarm/
 ├── src/
 │   ├── index.ts                 # SDK exports + Swarm class
+│   ├── session.ts               # Agent factory (pi-authenticated)
+│   ├── env.ts                   # .env loader + API key resolution
 │   ├── extension.ts             # Pi extension entry point
 │   ├── types.ts                 # All type definitions
-│   ├── config.ts                # Default configurations
+│   ├── config.ts                # Default team configurations
 │   ├── orchestrator/
-│   │   ├── orchestrator.ts      # CEO orchestrator agent
-│   │   └── tools.ts             # Orchestrator tools (delegate, broadcast, etc.)
+│   │   ├── orchestrator.ts      # CEO agent + cycle runner
+│   │   └── tools.ts             # delegate, broadcast, finish_cycle
 │   ├── team-lead/
 │   │   ├── team-lead.ts         # Team lead agent factory
-│   │   ├── tools.ts             # Team lead tools (spawn_worker, report, etc.)
-│   │   └── roles.ts             # C-level role definitions
+│   │   ├── tools.ts             # spawn_worker, report, list_workers
+│   │   └── roles.ts             # CTO, CPO, CMO, COO, CRO definitions
 │   ├── worker/
-│   │   ├── worker.ts            # Ephemeral worker factory
-│   │   └── roles.ts             # 22 worker role definitions
+│   │   ├── worker.ts            # Ephemeral worker runner
+│   │   └── roles.ts             # 21 specialist role definitions
 │   ├── protocol/
-│   │   ├── messages.ts          # Message creation utilities
-│   │   ├── router.ts            # Routing rules
+│   │   ├── messages.ts          # Inter-agent message creation
+│   │   ├── router.ts            # 8 built-in routing rules
 │   │   └── thread.ts            # Thread tracking
+│   ├── ui/
+│   │   ├── tracker.ts           # CycleTracker (agent lifecycle events)
+│   │   ├── tree.ts              # ASCII tree renderer with ANSI colors
+│   │   ├── progress.ts          # Live indented progress output
+│   │   └── index.ts             # Re-exports
 │   └── utils/
 │       ├── logger.ts            # Structured JSONL logger
-│       └── cost-tracker.ts      # Token & cost tracking
+│       └── cost-tracker.ts      # Token & cost aggregation
 ├── examples/
-│   ├── basic-orchestration.ts   # Minimal CEO + CTO example
-│   ├── full-company.ts          # Full 50-agent simulation
-│   └── custom-team.ts           # Custom team definitions
+│   ├── basic-orchestration.ts   # Single dev task
+│   ├── full-company.ts          # All 5 teams, quarterly planning
+│   └── custom-team.ts           # Custom research + design studio
 └── skills/
     └── orchestrate/
-        └── SKILL.md             # Pi skill for natural language use
+        └── SKILL.md             # Pi skill for /swarm commands
 ```
 
 ## License
