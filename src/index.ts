@@ -73,7 +73,7 @@ export { CostTracker } from "./utils/cost-tracker.js";
 export type { CostEntry } from "./utils/cost-tracker.js";
 
 // Environment
-export { resolveApiKey, envModelConfig, ENV_PROVIDER, ENV_MODEL } from "./env.js";
+export { resolveApiKey, envModelConfig, ENV_PROVIDER, ENV_MODEL, authenticatedStreamFn, createAuthenticatedStreamFn } from "./env.js";
 
 // ---------------------------------------------------------------------------
 // Swarm — High-level convenience class

@@ -6,11 +6,11 @@
  */
 
 import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel, streamSimple } from "@mariozechner/pi-ai";
+import { getModel } from "@mariozechner/pi-ai";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { CycleResult, SwarmConfig } from "../types.js";
 import { createOrchestratorTools } from "./tools.js";
-import { resolveApiKey } from "../env.js";
+import { authenticatedStreamFn } from "../env.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
 import { randomUUID } from "node:crypto";
@@ -46,7 +46,7 @@ Be strategic. Not every task needs every team. Delegate precisely.`;
 }
 
 /** Extract the last assistant text and usage from agent transcript. */
-function extractOutput(agent: Agent): { text: string; inputTokens: number; outputTokens: number; cost: number } {
+function extractOutput(agent: Agent): { text: string; inputTokens: number; outputTokens: number; cost: number; error?: string } {
   const messages = agent.state.messages;
   let inputTokens = 0;
   let outputTokens = 0;
@@ -68,6 +68,8 @@ function extractOutput(agent: Agent): { text: string; inputTokens: number; outpu
   ) as AssistantMessage | undefined;
 
   let text = "";
+  let error: string | undefined;
+
   if (lastAssistant) {
     text = lastAssistant.content
       .filter((b): b is { type: "text"; text: string } => b.type === "text")
@@ -75,11 +77,11 @@ function extractOutput(agent: Agent): { text: string; inputTokens: number; outpu
       .join("");
 
     if ((lastAssistant as any).stopReason === "error") {
-      throw new Error((lastAssistant as any).errorMessage ?? "Unknown agent error");
+      error = (lastAssistant as any).errorMessage ?? "Unknown agent error";
     }
   }
 
-  return { text, inputTokens, outputTokens, cost };
+  return { text, inputTokens, outputTokens, cost, error };
 }
 
 /**
@@ -104,7 +106,6 @@ export async function runOrchestrationCycle(
     : directive;
 
   try {
-    // Cast needed: pi-swarm is model-agnostic, so provider/model are runtime strings
     const model = (getModel as Function)(
       config.orchestrator.model.provider,
       config.orchestrator.model.model,
@@ -117,14 +118,18 @@ export async function runOrchestrationCycle(
         tools,
         thinkingLevel: config.orchestrator.model.thinkingLevel ?? "off",
       },
-      streamFn: streamSimple,
-      getApiKey: resolveApiKey,
+      streamFn: authenticatedStreamFn,
     });
 
     await agent.prompt(userMessage);
     await agent.waitForIdle();
 
-    const { text, inputTokens, outputTokens, cost: totalCost } = extractOutput(agent);
+    const { text, inputTokens, outputTokens, cost: totalCost, error } = extractOutput(agent);
+
+    // Log error but don't throw — the orchestrator may have partially completed
+    if (error) {
+      logger.error("orchestrator", "orchestrator_error", { error });
+    }
 
     costTracker.record("orchestrator", inputTokens, outputTokens, totalCost);
 
@@ -142,7 +147,7 @@ export async function runOrchestrationCycle(
       cycleId,
       timestamp: new Date().toISOString(),
       delegations,
-      companyStatus: text,
+      companyStatus: error ? `Orchestration error: ${error}` : text,
       totalCost: costTracker.totalCost,
       duration,
     };

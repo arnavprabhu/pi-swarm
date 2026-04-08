@@ -6,16 +6,16 @@
  */
 
 import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel, streamSimple } from "@mariozechner/pi-ai";
+import { getModel } from "@mariozechner/pi-ai";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { AgentConfig, AgentResult, ModelConfig, TeamId } from "../types.js";
 import { createTeamLeadTools } from "./tools.js";
-import { resolveApiKey } from "../env.js";
+import { authenticatedStreamFn } from "../env.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 import { logger } from "../utils/logger.js";
 
 /** Extract text and usage from agent transcript. */
-function extractOutput(agent: Agent): { text: string; inputTokens: number; outputTokens: number; cost: number } {
+function extractOutput(agent: Agent): { text: string; inputTokens: number; outputTokens: number; cost: number; error?: string } {
   const messages = agent.state.messages;
   let inputTokens = 0;
   let outputTokens = 0;
@@ -37,6 +37,8 @@ function extractOutput(agent: Agent): { text: string; inputTokens: number; outpu
   ) as AssistantMessage | undefined;
 
   let text = "";
+  let error: string | undefined;
+
   if (lastAssistant) {
     text = lastAssistant.content
       .filter((b): b is { type: "text"; text: string } => b.type === "text")
@@ -44,11 +46,11 @@ function extractOutput(agent: Agent): { text: string; inputTokens: number; outpu
       .join("");
 
     if ((lastAssistant as any).stopReason === "error") {
-      throw new Error((lastAssistant as any).errorMessage ?? "Unknown agent error");
+      error = (lastAssistant as any).errorMessage ?? "Unknown agent error";
     }
   }
 
-  return { text, inputTokens, outputTokens, cost };
+  return { text, inputTokens, outputTokens, cost, error };
 }
 
 /**
@@ -79,7 +81,6 @@ export async function runTeamLead(
   );
 
   try {
-    // Cast needed: pi-swarm is model-agnostic, so provider/model are runtime strings
     const model = (getModel as Function)(config.model.provider, config.model.model);
 
     const agent = new Agent({
@@ -89,15 +90,18 @@ export async function runTeamLead(
         tools,
         thinkingLevel: config.model.thinkingLevel ?? "off",
       },
-      streamFn: streamSimple,
-      getApiKey: resolveApiKey,
+      streamFn: authenticatedStreamFn,
     });
 
     await agent.prompt(directive);
     await agent.waitForIdle();
 
     const duration = Date.now() - startTime;
-    const { text, inputTokens, outputTokens, cost: totalCost } = extractOutput(agent);
+    const { text, inputTokens, outputTokens, cost: totalCost, error } = extractOutput(agent);
+
+    if (error) {
+      throw new Error(error);
+    }
 
     tracker.record(config.id, inputTokens, outputTokens, totalCost);
 

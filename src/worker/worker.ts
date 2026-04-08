@@ -1,25 +1,27 @@
 /**
  * Ephemeral worker agent factory.
  *
- * Workers are the simplest agents — no session persistence, no memory.
+ * Workers are lightweight agents — no session persistence, no memory.
  * They receive a task, execute it, and return a structured result.
+ *
+ * Uses pi-agent-core's Agent class the same way pi-coding-agent does:
+ * custom streamFn with injected API key, proper event handling.
  */
 
 import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel, streamSimple } from "@mariozechner/pi-ai";
+import { getModel } from "@mariozechner/pi-ai";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { AgentConfig, AgentResult } from "../types.js";
-import { resolveApiKey } from "../env.js";
+import { authenticatedStreamFn } from "../env.js";
 import { logger } from "../utils/logger.js";
 import { CostTracker } from "../utils/cost-tracker.js";
 
 /** Extract text and usage from the agent transcript. */
-function extractOutput(agent: Agent): { text: string; inputTokens: number; outputTokens: number; cost: number } {
+function extractOutput(agent: Agent): { text: string; inputTokens: number; outputTokens: number; cost: number; error?: string } {
   const messages = agent.state.messages;
   let inputTokens = 0;
   let outputTokens = 0;
   let cost = 0;
-  let text = "";
 
   for (const msg of messages) {
     if ("role" in msg && msg.role === "assistant") {
@@ -37,19 +39,21 @@ function extractOutput(agent: Agent): { text: string; inputTokens: number; outpu
     (m) => "role" in m && m.role === "assistant",
   ) as AssistantMessage | undefined;
 
+  let text = "";
+  let error: string | undefined;
+
   if (lastAssistant) {
     text = lastAssistant.content
       .filter((b): b is { type: "text"; text: string } => b.type === "text")
       .map((b) => b.text)
       .join("");
 
-    // Check for error
     if ((lastAssistant as any).stopReason === "error") {
-      throw new Error((lastAssistant as any).errorMessage ?? "Unknown agent error");
+      error = (lastAssistant as any).errorMessage ?? "Unknown agent error";
     }
   }
 
-  return { text, inputTokens, outputTokens, cost };
+  return { text, inputTokens, outputTokens, cost, error };
 }
 
 /**
@@ -70,7 +74,6 @@ export async function runWorker(
     : config.systemPrompt;
 
   try {
-    // Cast needed: pi-swarm is model-agnostic, so provider/model are runtime strings
     const model = (getModel as Function)(config.model.provider, config.model.model);
 
     const agent = new Agent({
@@ -80,15 +83,18 @@ export async function runWorker(
         tools: [],
         thinkingLevel: config.model.thinkingLevel ?? "off",
       },
-      streamFn: streamSimple,
-      getApiKey: resolveApiKey,
+      streamFn: authenticatedStreamFn,
     });
 
     await agent.prompt(task);
     await agent.waitForIdle();
 
     const duration = Date.now() - startTime;
-    const { text, inputTokens, outputTokens, cost: totalCost } = extractOutput(agent);
+    const { text, inputTokens, outputTokens, cost: totalCost, error } = extractOutput(agent);
+
+    if (error) {
+      throw new Error(error);
+    }
 
     if (costTracker) {
       costTracker.record(config.id, inputTokens, outputTokens, totalCost);
