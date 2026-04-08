@@ -1,7 +1,9 @@
 <p align="center">
-  <h1 align="center">pi-swarm</h1>
-  <p align="center">Multi-agent orchestration built on <a href="https://github.com/badlogic/pi-mono">pi.dev</a></p>
+  <img src="assets/logo.jpg" alt="pi-swarm logo" width="200">
 </p>
+
+<h1 align="center">pi-swarm</h1>
+<p align="center">Multi-agent orchestration built on <a href="https://github.com/badlogic/pi-mono">pi.dev</a></p>
 
 <p align="center">
   <a href="https://github.com/arnavprabhu/pi-swarm/blob/main/LICENSE"><img src="https://img.shields.io/github/license/arnavprabhu/pi-swarm?style=flat-square&color=blue" alt="License"></a>
