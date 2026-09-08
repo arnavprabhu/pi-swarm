@@ -10,7 +10,7 @@ Workers analyze the supplied task and context and return text. They cannot brows
 
 The CEO selects configured teams. Leads discover their configured workers, delegate analysis, and report back. The CEO returns a synthesis.
 
-Inside pi, all tiers inherit the active provider, model, and thinking level. Use `/model` to select an available model and `/swarm-config` to verify it. The tested OpenAI Codex setup is `openai-codex/gpt-5.6-luna`, authenticated through pi's `/login`. Model availability depends on the configured provider and account; see the README for current alternatives and SDK per-tier examples.
+Inside pi, all tiers inherit the active provider, model, and thinking level. Use `/model` to select an available model and `/swarm-config` to verify it. For example, `openai-codex/gpt-5.6-luna` authenticates through pi's `/login`. See the README for SDK per-tier examples.
 
 Tool parameters:
 - `task`: required task description.

@@ -1,11 +1,7 @@
 # Getting started
 
-This tutorial uses the maintained pi 0.85.1 packages and Node.js 24+. The
-practical default is `openai-codex/gpt-5.6-luna`; model IDs are resolved by
-pi's installed catalog, so `/model` is authoritative. Other current catalog
-examples include `openai-codex/gpt-5.6-sol`, `openai-codex/gpt-5.6-terra`,
-`openai/gpt-5.6-luna`, `anthropic/claude-opus-4-8`, and
-`google/gemini-3.1-pro-preview`. These are examples, not a ranking.
+This tutorial uses pi 0.85.1, Node.js 24+, and `openai-codex/gpt-5.6-luna`.
+Use `/model` to choose another model available through your configured provider.
 
 ## 1. Install and authenticate
 

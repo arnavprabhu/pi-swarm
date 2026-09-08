@@ -54,26 +54,7 @@ Without pi's extension context, the SDK initializes pi's model runtime lazily an
 
 Per-tier overrides remain available through `orchestratorModel`, `teamLeadModel`, and `workerModel`, each accepting `{ provider, model, thinkingLevel? }`. A full `config: SwarmConfig` overrides convenience options. Execution options also accept `modelRegistry` for custom providers.
 
-## Advanced model choices (verified September 7, 2026)
-
-The pinned pi `0.85.1` catalog includes the following current choices. “Frontier” here means a current advanced option documented by its provider, not a benchmark ranking; availability, limits, and pricing depend on your account and route.
-
-| Tier | pi provider/model ID | Intended use |
-| --- | --- | --- |
-| Frontier | `openai-codex/gpt-6-astra` | Hardest reasoning and coding; OpenAI says Astra access is still rolling out. |
-| Frontier | `openai-codex/gpt-5.6-sol` | Strong option for complex professional work. |
-| Frontier | `anthropic/claude-opus-4-8` | Highest-capability Claude work. |
-| Frontier (preview) | `google/gemini-3.1-pro-preview` | Complex multimodal and agentic work; preview model. |
-| Balanced | `openai-codex/gpt-5.6-terra` | Strong quality/cost balance. |
-| Balanced | `anthropic/claude-sonnet-4-6` | General-purpose Claude work. |
-| Balanced | `google/gemini-3.8-flash` | Latest stable Flash option for long-horizon coding and agents. |
-| High volume | `openai-codex/gpt-5.6-luna` | Cost-sensitive, high-volume work; live-tested with pi-swarm. |
-| High volume | `anthropic/claude-haiku-4-5` | Lower-latency Claude work. |
-| High volume | `google/gemini-3.5-flash-lite` | Cost-efficient, high-throughput work. |
-
-The model IDs above are present in the installed `@earendil-works/pi-ai@0.85.1` catalog. Provider references: [OpenAI model guide](https://developers.openai.com/api/docs/models/gpt), [Anthropic models overview](https://platform.claude.com/docs/en/models/overview), and [Google Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash). Google’s `gemini-3.1-pro-preview` is explicitly a preview ID; `gemini-3.8-flash` is documented as stable/GA.
-
-`openai-codex` is pi’s login-backed provider: run `/login` and authenticate the Codex account, then choose the model in `/model`. It is not the same credential path as `openai`, which uses an OpenAI API key (for example `OPENAI_API_KEY`) and the corresponding `openai/gpt-6-astra`, `openai/gpt-5.6-sol`, `openai/gpt-5.6-terra`, or `openai/gpt-5.6-luna` IDs. Do not assume either route is enabled for every account.
+`openai-codex` uses pi's `/login` authentication. The `openai` provider uses an OpenAI API key, such as `OPENAI_API_KEY`. Select an available model with `/model`.
 
 Example per-tier SDK configuration:
 
