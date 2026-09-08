@@ -1,185 +1,71 @@
-/**
- * CEO / Orchestrator agent.
- */
-
+import { randomUUID } from "node:crypto";
 import type { CycleResult, SwarmConfig } from "../types.js";
-import { createSwarmAgent } from "../session.js";
 import { createOrchestratorToolDefinitions } from "./tools.js";
-import { CostTracker } from "../utils/cost-tracker.js";
-import { logger } from "../utils/logger.js";
+import { runConfiguredAgent } from "../worker/worker.js";
+import { RunContext, positiveInteger, type RunOptions } from "../runtime.js";
 import { CycleTracker } from "../ui/tracker.js";
 import { ProgressLogger } from "../ui/progress.js";
 import { printTree } from "../ui/tree.js";
-import { randomUUID } from "node:crypto";
 
-/** Options for controlling orchestration behavior. */
-export interface OrchestrationOptions {
-  /** Show the live progress output. Default: true */
+export interface OrchestrationOptions extends RunOptions {
   showProgress?: boolean;
-  /** Print the team tree after cycle. Default: true */
   showTree?: boolean;
-  /** Suppress the default JSONL logger. Default: true when showProgress is true */
+  /** Retained for compatibility. Cycle execution no longer changes the global logger. */
   suppressLogger?: boolean;
 }
 
-function buildOrchestratorPrompt(config: SwarmConfig): string {
-  const teamList = Object.entries(config.teams)
-    .map(([id, team]) => `- **${team.lead.name}** (${id}): manages ${team.workers.length} workers`)
-    .join("\n");
-
-  return `You are the CEO / Orchestrator of "${config.name}".
-
-Your role is to receive high-level directives and coordinate their execution across your leadership team.
-
-## Your Teams
-${teamList || "Teams are configured dynamically. Use the delegate_task tool to assign work."}
-
-## Operating Principles
-1. **Decompose** — Break complex directives into team-level tasks
-2. **Delegate** — Assign each task to the most appropriate team lead
-3. **Coordinate** — Handle cross-team dependencies and conflicts
-4. **Synthesize** — Collect reports and produce a unified summary
-5. **Budget** — Be mindful of costs; each delegation spawns AI agents${config.costBudget ? `\n6. **Budget limit**: $${config.costBudget.toFixed(2)} per cycle` : ""}
-
-## Workflow
-1. Analyze the directive
-2. Identify which teams need to be involved
-3. Use delegate_task for focused work or broadcast for cross-cutting tasks
-4. Collect reports and resolve any conflicts
-5. Call finish_cycle with a comprehensive summary
-
-Be strategic. Not every task needs every team. Delegate precisely.`;
+function validate(config: SwarmConfig, directive: string): void {
+  if (!directive.trim()) throw new Error("Directive must not be empty");
+  for (const [id, team] of Object.entries(config.teams)) {
+    if (!id.trim()) throw new Error("Team IDs must not be empty");
+    if (new Set(team.workers.map(w => w.id)).size !== team.workers.length) throw new Error(`Duplicate worker IDs in ${id}`);
+  }
+  for (const agent of [config.orchestrator, ...Object.values(config.teams).flatMap(t => [t.lead, ...t.workers])]) {
+    if (!agent.id.trim()) throw new Error("Agent IDs must not be empty");
+    if (agent.maxTurns !== undefined) positiveInteger(agent.maxTurns, "maxTurns");
+    if (agent.tools?.length) throw new Error("Configured tool names are unsupported; swarm workers return text only");
+  }
 }
 
-/**
- * Run a full orchestration cycle with UI.
- */
 export async function runOrchestrationCycle(
-  config: SwarmConfig,
-  directive: string,
-  context?: string,
-  uiOpts?: OrchestrationOptions,
+  config: SwarmConfig, directive: string, context?: string, options: OrchestrationOptions = {},
 ): Promise<CycleResult> {
+  validate(config, directive);
+  const start = Date.now();
   const cycleId = randomUUID();
-  const startTime = Date.now();
-  const costTracker = new CostTracker(config.costBudget);
-
-  const showProgress = uiOpts?.showProgress ?? true;
-  const showTree = uiOpts?.showTree ?? true;
-  const suppressLogger = uiOpts?.suppressLogger ?? showProgress;
-
-  // Fully suppress JSONL logger when progress UI is active
-  // (errors are shown via the ProgressLogger's colored format instead)
-  const prevLogLevel = logger.getLevel();
-  if (suppressLogger) {
-    logger.setEnabled(false);
-  }
-
-  // Create UI components
+  const runtime = new RunContext(options, config.maxConcurrentAgents ?? 10, config.costBudget);
   const cycleTracker = new CycleTracker(config.name);
   cycleTracker.cycleId = cycleId;
-  const progress = new ProgressLogger(showProgress);
-
-  // Register orchestrator in tracker
-  const orchModel = config.orchestrator.model.model;
-  cycleTracker.register("orchestrator", "Orchestrator", "orchestrator", orchModel);
-  cycleTracker.working("orchestrator");
-
-  progress.cycleStart(directive);
-  logger.info("orchestrator", "cycle_started", { cycleId, directive });
-
-  const systemPrompt = buildOrchestratorPrompt(config);
-  const { tools, getDelegationResults } = createOrchestratorToolDefinitions(config, {
-    costTracker,
-    cycleTracker,
-    progress,
+  const progress = new ProgressLogger(options.showProgress ?? true);
+  const executionId = randomUUID();
+  const { tools, getDelegationResults, getSummary } = createOrchestratorToolDefinitions(config, {
+    ...options, runtime, cycleTracker, progress, executionId,
   });
-
-  const userMessage = context ? `${directive}\n\n## Additional Context\n${context}` : directive;
-
-  try {
-    const agent = createSwarmAgent({
-      agentId: "orchestrator",
-      systemPrompt,
-      model: config.orchestrator.model,
-      thinkingLevel: config.orchestrator.model.thinkingLevel ?? "off",
-      tools,
-    });
-
-    await agent.prompt(userMessage);
-    await agent.waitForIdle();
-
-    const messages = agent.state.messages;
-    const lastMsg = [...messages].reverse().find((m) => "role" in m && m.role === "assistant") as any;
-
-    let text = "";
-    let error: string | undefined;
-
-    if (lastMsg) {
-      text = lastMsg.content?.filter((b: any) => b.type === "text").map((b: any) => b.text).join("") ?? "";
-      if (lastMsg.stopReason === "error") error = lastMsg.errorMessage ?? "Unknown error";
-    }
-
-    if (error) {
-      // Show via progress logger (colored) instead of raw JSONL
-      progress.failed("Orchestrator", "orchestrator", error);
-      cycleTracker.error("orchestrator", error);
-    }
-
-    const delegations = Array.from(getDelegationResults().values());
-    const duration = Date.now() - startTime;
-
-    // Record the orchestrator's own estimated cost
-    const orchInputTokens = Math.ceil((systemPrompt.length + userMessage.length) / 4);
-    const orchOutputTokens = Math.ceil(text.length / 4);
-    const orchCost = (orchInputTokens / 1000) * 0.01 + (orchOutputTokens / 1000) * 0.03;
-    costTracker.record("orchestrator", orchInputTokens, orchOutputTokens, orchCost);
-
-    if (!error) cycleTracker.complete("orchestrator", { duration, cost: orchCost });
-    progress.cycleEnd(duration, delegations.length);
-
-    // Print the team tree
-    if (showTree) {
-      printTree(cycleTracker);
-    }
-
-    logger.info("orchestrator", "cycle_completed", {
-      cycleId, duration, totalCost: costTracker.totalCost, teamsInvolved: delegations.length,
-    });
-
-    // Restore logger after our final log
-    if (suppressLogger) {
-      logger.setEnabled(true);
-      logger.setLevel(prevLogLevel);
-    }
-
-    return {
-      cycleId,
-      timestamp: new Date().toISOString(),
-      delegations,
-      companyStatus: error ? `Orchestration error: ${error}` : text,
-      totalCost: costTracker.totalCost,
-      duration,
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const duration = Date.now() - startTime;
-
-    cycleTracker.error("orchestrator", errorMessage);
-    progress.failed("Orchestrator", "orchestrator", errorMessage);
-
-    if (showTree) printTree(cycleTracker);
-    if (suppressLogger) {
-      logger.setEnabled(true);
-      logger.setLevel(prevLogLevel);
-    }
-
-    logger.error("orchestrator", "cycle_failed", { cycleId, error: errorMessage });
-
-    return {
-      cycleId, timestamp: new Date().toISOString(), delegations: [],
-      companyStatus: `Orchestration failed: ${errorMessage}`,
-      totalCost: costTracker.totalCost, duration,
-    };
-  }
+  const teams = Object.entries(config.teams).map(([id, t]) => `${id}: ${t.lead.name} (${t.workers.length} workers)`).join("\n");
+  const prompt = [
+    config.orchestrator.systemPrompt,
+    `You coordinate ${config.name}. Configured teams:\n${teams}`,
+    "Decompose the directive, delegate precisely, collect reports, and finish_cycle with a useful synthesis.",
+    "Workers analyze and generate text. They cannot browse, edit files, or execute commands. Do not claim those actions occurred.",
+    "Use completed reports as evidence. State failures and uncertainty. Not every task needs every team.",
+  ].filter(Boolean).join("\n\n");
+  progress.cycleStart(directive);
+  const result = await runConfiguredAgent({ ...config.orchestrator, systemPrompt: prompt },
+    directive, context, { ...options, runtime, cycleTracker, progress, executionId }, tools, getSummary);
+  const delegations = [...getDelegationResults().values()];
+  const status = runtime.status ?? (runtime.signal.aborted ? "cancelled"
+    : result.status !== "completed" ? result.status!
+    : delegations.some(d => d.status === "turn_limit") ? "turn_limit"
+    : delegations.some(d => !d.success) ? "partial" : "completed");
+  const duration = Date.now() - start;
+  if (status !== "completed") cycleTracker.error(executionId, result.error ?? status);
+  if (status === "completed") progress.cycleEnd(duration, delegations.length);
+  else progress.failed(config.orchestrator.name, "orchestrator", status);
+  if (options.showTree ?? true) printTree(cycleTracker);
+  return {
+    cycleId, timestamp: new Date().toISOString(), status,
+    error: result.error ?? (status !== "completed" ? status : undefined),
+    delegations, companyStatus: getSummary() ?? result.output,
+    totalCost: runtime.costs.totalCost, duration,
+  };
 }

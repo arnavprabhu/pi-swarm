@@ -1,60 +1,28 @@
 ---
-description: Multi-agent orchestration via pi-swarm
+description: Delegate analysis and text generation to pi-swarm specialists
 ---
 
 # Orchestrate
 
-Use the pi-swarm extension to delegate complex tasks to a multi-agent team.
+Use `swarm_delegate` for tasks that benefit from several specialist perspectives.
 
-## Overview
+Workers analyze the supplied task and context and return text. They cannot browse, read or write project files, or execute code. Supply relevant facts or code in `context`; do not claim that the swarm performed external actions.
 
-pi-swarm provides a hierarchical multi-agent orchestration system:
+The CEO selects configured teams. Leads discover their configured workers, delegate analysis, and report back. The CEO returns a synthesis.
 
-- **Orchestrator (CEO)** — receives your high-level directive and decomposes it
-- **Team Leads (C-level)** — domain experts who manage specialist workers
-- **Workers** — stateless specialists that execute atomic tasks
+Inside pi, all tiers inherit the active provider, model, and thinking level. Use `/model` to select an available model and `/swarm-config` to verify it. The tested OpenAI Codex setup is `openai-codex/gpt-5.6-luna`, authenticated through pi's `/login`. Model availability depends on the configured provider and account; see the README for current alternatives and SDK per-tier examples.
 
-## Tools
+Tool parameters:
+- `task`: required task description.
+- `context`: optional supporting information.
+- `budget`: optional dollar threshold using pi's reported usage and pricing. In-flight requests may exceed it.
 
-### `swarm_delegate`
+Commands:
+- `/swarm <task>`: start a task using pi's active model.
+- `/swarm-config`: inspect configuration.
+- `/swarm-status`: inspect the active run or last result.
+- `/swarm-cancel`: cancel the run and descendants.
 
-Delegate a task to the full multi-agent pipeline.
+Check the cycle status and worker failures before treating a result as complete. There is no `swarm_status` tool.
 
-```
-Use the swarm_delegate tool to send a complex task through the orchestration pipeline.
-The CEO agent will analyze the task, delegate to relevant team leads, who will spawn
-specialist workers as needed.
-```
-
-**Parameters:**
-- `task` (required) — The high-level task description
-- `context` (optional) — Additional background or constraints
-- `budget` (optional) — Maximum cost in dollars
-
-### `swarm_status`
-
-Get the results of the last orchestration cycle.
-
-## Commands
-
-- `/swarm <task>` — Quick-run a task through the pipeline
-- `/swarm-config` — Show or update swarm configuration
-- `/swarm-status` — Show last cycle results
-
-## When to Use
-
-Use pi-swarm when a task:
-- Requires multiple specialized perspectives (engineering + product + marketing)
-- Benefits from decomposition into sub-tasks
-- Needs cross-functional coordination
-- Would take one agent too long to handle alone
-
-## Examples
-
-```
-/swarm Plan and execute a product launch for our new analytics feature
-
-/swarm Review our codebase architecture and propose improvements across security, performance, and developer experience
-
-/swarm Create a comprehensive go-to-market strategy for entering the European market
-```
+Example: `/swarm Draft a product-launch plan and identify engineering, marketing, and support dependencies.`

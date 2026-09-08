@@ -1,242 +1,153 @@
-/**
- * Pi session factory for pi-swarm agents.
- *
- * Creates lightweight Agent instances using pi's auth infrastructure
- * (AuthStorage + ModelRegistry) without the heavy createAgentSession
- * overhead (resource loading, extension discovery, session persistence).
- *
- * This gives us:
- * - Proper auth via pi's AuthStorage (same as `pi /login`)
- * - Env var fallback (GEMINI_API_KEY, OPENAI_API_KEY, etc.)
- * - Model resolution via getModel()
- * - Fast startup (no resource/extension scanning)
- */
+import { Agent, type AgentTool, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { lazyStream, type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
+import { ModelRuntime, ModelRegistry, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentResult, ModelConfig } from "./types.js";
+import { envModelConfig } from "./env.js";
+import { positiveInteger, RunContext, type RunOptions } from "./runtime.js";
 
-import { Agent } from "@mariozechner/pi-agent-core";
-import type { AgentTool, ThinkingLevel } from "@mariozechner/pi-agent-core";
-import { getModel, streamSimple, getEnvApiKey } from "@mariozechner/pi-ai";
-import type { Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
-import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import type { ModelConfig } from "./types.js";
-import { logger } from "./utils/logger.js";
-
-// ---------------------------------------------------------------------------
-// Shared auth infrastructure (created once, reused across all agents)
-// ---------------------------------------------------------------------------
-
-let _authStorage: AuthStorage | null = null;
-let _modelRegistry: ModelRegistry | null = null;
-
-function getAuthStorage(): AuthStorage {
-  if (!_authStorage) {
-    _authStorage = AuthStorage.create();
-  }
-  return _authStorage;
+let registry: Promise<ModelRegistry> | undefined;
+function defaultRegistry(): Promise<ModelRegistry> {
+  return registry ??= ModelRuntime.create().then(runtime => new ModelRegistry(runtime)).catch(error => {
+    registry = undefined;
+    throw error;
+  });
 }
 
-function getModelRegistry(): ModelRegistry {
-  if (!_modelRegistry) {
-    _modelRegistry = ModelRegistry.create(getAuthStorage());
-  }
-  return _modelRegistry;
-}
-
-/**
- * Create an authenticated stream function using pi's ModelRegistry.
- *
- * This follows the same pattern as pi-coding-agent's SDK:
- * resolve API key + headers from ModelRegistry, then call streamSimple.
- */
-function createPiStreamFn() {
-  const registry = getModelRegistry();
-
-  return async (model: Model<any>, context: any, options?: SimpleStreamOptions) => {
-    const auth = await registry.getApiKeyAndHeaders(model);
-
-    if (!auth.ok) {
-      // Fall back to env var
-      const envKey = getEnvApiKey(model.provider as any);
-      if (envKey) {
-        return streamSimple(model, context, { ...options, apiKey: envKey });
-      }
-      throw new Error(
-        `No API key for provider "${model.provider}". ` +
-          `Run 'pi /login' or set the appropriate env var in .env`,
-      );
-    }
-
-    return streamSimple(model, context, {
-      ...options,
-      apiKey: auth.apiKey,
-      headers: auth.headers || options?.headers
-        ? { ...auth.headers, ...options?.headers }
-        : undefined,
-    });
-  };
-}
-
-// Shared stream function
-const piStreamFn = createPiStreamFn();
-
-// ---------------------------------------------------------------------------
-// Agent factory
-// ---------------------------------------------------------------------------
-
-export interface SwarmAgentOptions {
-  /** Agent ID for logging. */
+export interface SwarmAgentOptions extends RunOptions {
   agentId: string;
-  /** System prompt. */
   systemPrompt: string;
-  /** Model config. If omitted, uses env defaults. */
   model?: ModelConfig;
-  /** Thinking level. Default: "off" */
   thinkingLevel?: ThinkingLevel;
-  /** Tools to provide to the agent. */
   tools?: AgentTool<any, any>[];
+  maxTurns?: number;
+  runtime?: RunContext;
+  onUsage?: (usage: Usage) => void;
+  isComplete?: () => boolean;
 }
 
-/**
- * Create a lightweight pi-authenticated Agent.
- *
- * Much faster than createAgentSession — no resource loading,
- * no extension discovery, no session persistence.
- */
-export function createSwarmAgent(options: SwarmAgentOptions): Agent {
-  const {
-    agentId,
-    systemPrompt,
-    model: modelConfig,
-    thinkingLevel = "off",
-    tools = [],
-  } = options;
-
-  logger.info(agentId, "creating_agent", {
-    model: modelConfig ? `${modelConfig.provider}/${modelConfig.model}` : "default",
-    thinkingLevel,
-    toolCount: tools.length,
-  });
-
-  let model: Model<any>;
-  if (modelConfig && modelConfig.model !== "placeholder") {
-    model = (getModel as Function)(modelConfig.provider, modelConfig.model);
-  } else {
-    // Try env vars first
-    const provider = process.env.PROVIDER;
-    const modelId = process.env.MODEL;
-    if (provider && modelId) {
-      model = (getModel as Function)(provider, modelId);
-    } else {
-      // No env config — try to find a model with a configured API key
-      // via pi's ModelRegistry (same auth as `pi /login`)
-      const registry = getModelRegistry();
-      const available = registry.getAvailable();
-
-      if (available.length > 0) {
-        // Prefer well-known capable models over obscure ones
-        const preferred = available.find((m) =>
-          m.id.includes("sonnet") || m.id.includes("opus") ||
-          m.id.includes("gpt-4") || m.id.includes("gemini") ||
-          m.id.includes("flash")
-        );
-        model = preferred ?? available[0];
-        logger.info(agentId, "model_auto_resolved", {
-          model: `${model.provider}/${model.id}`,
-          totalAvailable: available.length,
-        });
-      } else {
-        throw new Error(
-          "No model available. Either:\n" +
-          "  1. Set PROVIDER and MODEL in .env\n" +
-          "     Example: PROVIDER=google  MODEL=gemini-2.5-flash\n" +
-          "  2. Authenticate via pi: pi /login",
-        );
-      }
-    }
-  }
-
-  const agent = new Agent({
+/** Pi's current model runtime initializes asynchronously. */
+export async function createSwarmAgent(options: SwarmAgentOptions): Promise<Agent> {
+  const runtime = options.runtime ?? new RunContext(options);
+  runtime.check();
+  const models = options.modelRegistry ?? runtime.options.modelRegistry ?? await defaultRegistry();
+  const config = options.model?.model === "placeholder" ? envModelConfig() : options.model ?? envModelConfig();
+  const model = config ? models.find(config.provider, config.model) : models.getAvailable()[0];
+  if (!model) throw new Error(config
+    ? `Unknown model: ${config.provider}/${config.model}`
+    : "No authenticated model available. Use pi /login or set PROVIDER, MODEL and an API key.");
+  const maxTurns = options.maxTurns ?? 20;
+  positiveInteger(maxTurns, "maxTurns");
+  let turns = 0;
+  return new Agent({
     initialState: {
-      systemPrompt,
-      model,
-      tools,
-      thinkingLevel,
+      systemPrompt: options.systemPrompt, model, tools: options.tools ?? [],
+      thinkingLevel: options.thinkingLevel ?? config?.thinkingLevel ?? "off",
     },
-    streamFn: piStreamFn,
+    toolExecution: "sequential",
+    shouldStopAfterTurn: () => options.isComplete?.() ?? false,
+    beforeToolCall: async () => {
+      if (options.isComplete?.()) return { block: true, reason: "Agent already finished", terminate: true };
+      if (runtime.signal.aborted || runtime.costs.isOverBudget) {
+        return { block: true, reason: runtime.status ?? "cancelled", terminate: true };
+      }
+      return undefined;
+    },
+    streamFn: (requestModel, context, streamOptions) => lazyStream(requestModel, async () => {
+      runtime.check();
+      if (turns >= maxTurns) throw new Error("turn_limit");
+      const signal = AbortSignal.any([
+        runtime.signal,
+        ...(options.signal ? [options.signal] : []),
+        ...(streamOptions?.signal ? [streamOptions.signal] : []),
+      ]);
+      const release = await runtime.acquire(signal);
+      try {
+        turns++;
+        const auth = await models.getApiKeyAndHeaders(requestModel);
+        signal.throwIfAborted();
+        if (!auth.ok) throw new Error(auth.error);
+        const provider = models.getProvider(requestModel.provider);
+        if (!provider) throw new Error(`Unknown provider: ${requestModel.provider}`);
+        const stream = provider.streamSimple(
+          auth.baseUrl ? { ...requestModel, baseUrl: auth.baseUrl } : requestModel,
+          context, {
+            ...streamOptions, signal,
+            apiKey: auth.apiKey, env: auth.env, headers: { ...auth.headers, ...streamOptions?.headers },
+          },
+        );
+        // Recording precedes publishing the terminal event to the agent loop.
+        return (async function* () {
+          try {
+            for await (const event of stream) {
+              if (event.type === "done" || event.type === "error") {
+                const message = event.type === "done" ? event.message : event.error;
+                options.onUsage?.(message.usage);
+                runtime.record(options.agentId, message.usage);
+              }
+              yield event;
+            }
+          } finally { release(); }
+        })();
+      } catch (error) { release(); throw error; }
+    }),
   });
-
-  logger.info(agentId, "agent_created", {
-    model: `${model.provider}/${model.id}`,
-    thinkingLevel,
-  });
-
-  return agent;
 }
 
-/**
- * Run a one-shot prompt against a lightweight agent.
- *
- * Creates an Agent, sends the prompt, waits for idle, extracts output.
- * No session overhead — just pure agent execution.
- */
-export async function runOneShot(
-  options: SwarmAgentOptions,
-  prompt: string,
-): Promise<{ text: string; success: boolean; error?: string }> {
+export async function runOneShot(options: SwarmAgentOptions, prompt: string) {
+  const runtime = options.runtime ?? new RunContext(options);
+  const cost = { input: 0, output: 0, total: 0 };
+  const tokensUsed = { input: 0, output: 0 };
+  const toolCalls: AgentResult["toolCalls"] = [];
+  let text = "";
+  let error: string | undefined;
+  let unsubscribe: (() => void) | undefined;
+  let agent: Agent | undefined;
+  const abort = () => agent?.abort();
   try {
-    const agent = createSwarmAgent(options);
-
+    runtime.check();
+    agent = await createSwarmAgent({
+      ...options, runtime,
+      onUsage: usage => {
+        cost.input += usage.cost.input + usage.cost.cacheRead + usage.cost.cacheWrite;
+        cost.output += usage.cost.output;
+        cost.total += usage.cost.total;
+        tokensUsed.input += usage.input + usage.cacheRead + usage.cacheWrite;
+        tokensUsed.output += usage.output;
+        options.onUsage?.(usage);
+      },
+    });
+    const args = new Map<string, unknown>();
+    unsubscribe = agent.subscribe(event => {
+      if (event.type === "tool_execution_start") args.set(event.toolCallId, event.args);
+      if (event.type === "tool_execution_end") toolCalls.push({
+        name: event.toolName, args: args.get(event.toolCallId), result: JSON.stringify(event.result),
+      });
+    });
+    runtime.signal.addEventListener("abort", abort, { once: true });
+    runtime.check();
     await agent.prompt(prompt);
     await agent.waitForIdle();
-
-    // Extract the last assistant message
-    const messages = agent.state.messages;
-    const lastMsg = [...messages].reverse().find(
-      (m) => "role" in m && m.role === "assistant",
-    ) as any;
-
-    if (!lastMsg) {
-      return { text: "", success: false, error: "No assistant response" };
-    }
-
-    if (lastMsg.stopReason === "error") {
-      return { text: "", success: false, error: lastMsg.errorMessage ?? "Unknown error" };
-    }
-
-    const text = lastMsg.content
-      .filter((b: any) => b.type === "text")
-      .map((b: any) => b.text)
-      .join("");
-
-    return { text, success: true };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return { text: "", success: false, error: errorMessage };
+    const last = [...agent.state.messages].reverse().find((m): m is AssistantMessage => m.role === "assistant");
+    text = last?.content.filter(b => b.type === "text").map(b => b.text).join("") ?? "";
+    if (!last) error = "No assistant response";
+    else if (last.stopReason === "error" || last.stopReason === "aborted") error = last.errorMessage ?? last.stopReason;
+    else if (last.stopReason === "length") error = "Response truncated by model output limit";
+    else if (last.stopReason === "pending" || last.stopReason === "deferred") error = "Provider response has not completed";
+    else if (!text && last.stopReason !== "toolUse") error = "Empty assistant response";
+  } catch (cause) {
+    error = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    unsubscribe?.();
+    runtime.signal.removeEventListener("abort", abort);
   }
+  const status: NonNullable<AgentResult["status"]> = runtime.status ?? (runtime.signal.aborted ? "cancelled"
+    : error?.includes("turn_limit") ? "turn_limit" : error ? "failed" : "completed");
+  return { text, success: status === "completed", error: error ?? (status !== "completed" ? status : undefined), cost, tokensUsed, toolCalls, status, model: agent?.state.model };
 }
 
-// ---------------------------------------------------------------------------
-// Tool definition converter
-// ---------------------------------------------------------------------------
-
-/**
- * Convert pi ToolDefinition[] (from defineTool) to AgentTool[] for direct Agent use.
- *
- * The Agent class uses AgentTool, but defineTool creates ToolDefinition
- * (which has an extra `ctx` parameter in execute). We strip that.
- */
 export function toAgentTools(toolDefs: ToolDefinition<any, any>[]): AgentTool<any, any>[] {
-  return toolDefs.map((def) => ({
-    name: def.name,
-    label: def.label,
-    description: def.description,
-    parameters: def.parameters,
-    prepareArguments: def.prepareArguments,
-    execute: async (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
-      // ToolDefinition.execute takes (toolCallId, params, signal, onUpdate, ctx)
-      // AgentTool.execute takes (toolCallId, params, signal, onUpdate)
-      // We pass undefined for ctx since we're not in an extension context
-      return def.execute(toolCallId, params, signal, onUpdate, undefined as any);
-    },
+  return toolDefs.map(def => ({
+    name: def.name, label: def.label, description: def.description, parameters: def.parameters,
+    execute: (id, params, signal, onUpdate) => def.execute(id, params, signal, onUpdate, undefined as any),
   }));
 }

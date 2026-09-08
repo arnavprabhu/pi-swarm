@@ -3,7 +3,6 @@
  * Aggregates token usage and cost across all agents in an orchestration cycle.
  */
 
-import { logger } from "./logger.js";
 
 export interface CostEntry {
   agentId: string;
@@ -31,7 +30,6 @@ export class CostTracker {
       timestamp: new Date().toISOString(),
     };
     this.entries.push(entry);
-    logger.debug("cost-tracker", "cost_recorded", entry);
   }
 
   /** Total cost across all entries. */

@@ -5,7 +5,7 @@
  * Follows the AOrchestra 4-tuple pattern: (Instruction, Context, Tools, Model)
  */
 
-import type { KnownProvider } from "@mariozechner/pi-ai";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 // ---------------------------------------------------------------------------
 // Agent Tiers & Team Identifiers
@@ -23,12 +23,12 @@ export type TeamId = "dev" | "product" | "marketing" | "ops" | "gtm" | (string &
 
 /**
  * Model configuration — always read from .env or pi auth.
- * Never hardcoded. Supports any provider pi-ai's `getModel()` accepts.
+ * Supports built-in and custom provider/model pairs in pi's model registry.
  */
 export interface ModelConfig {
-  provider: KnownProvider;
+  provider: string;
   model: string;
-  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high";
+  thinkingLevel?: ThinkingLevel;
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +106,12 @@ export interface SwarmConfig {
 
 /** Represents the result of a single agent's execution. */
 export interface AgentResult {
+  executionId?: string;
+  status?: RunStatus;
+  error?: string;
+  workers?: AgentResult[];
+  /** Agent's own cost. Team totals include descendants separately. */
+  teamCost?: number;
   agentId: string;
   success: boolean;
   output: string;
@@ -117,6 +123,8 @@ export interface AgentResult {
 
 /** Represents the result of an entire orchestration cycle. */
 export interface CycleResult {
+  status: RunStatus;
+  error?: string;
   cycleId: string;
   timestamp: string;
   delegations: AgentResult[];
@@ -124,6 +132,8 @@ export interface CycleResult {
   totalCost: number;
   duration: number;
 }
+
+export type RunStatus = "completed" | "partial" | "failed" | "cancelled" | "budget_exceeded" | "turn_limit";
 
 // ---------------------------------------------------------------------------
 // Tool Call Descriptor

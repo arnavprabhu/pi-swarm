@@ -1,167 +1,69 @@
-/**
- * Orchestrator-level tools.
- */
-
-import { Type } from "@mariozechner/pi-ai";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { AgentResult, SwarmConfig, TeamId } from "../types.js";
+import { Type } from "@earendil-works/pi-ai";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentResult, SwarmConfig } from "../types.js";
 import { runTeamLead } from "../team-lead/team-lead.js";
-import type { TeamLeadRunOptions } from "../team-lead/team-lead.js";
-import { getTeamLeadRole, teamLeadRoleToConfig } from "../team-lead/roles.js";
-import { CostTracker } from "../utils/cost-tracker.js";
-import { logger } from "../utils/logger.js";
-import type { CycleTracker } from "../ui/tracker.js";
-import type { ProgressLogger } from "../ui/progress.js";
+import type { WorkerRunOptions } from "../worker/worker.js";
+import { RunContext } from "../runtime.js";
 import { toolResult as text } from "../utils/tool-helpers.js";
 
-export interface OrchestratorToolOptions {
-  costTracker: CostTracker;
-  cycleTracker?: CycleTracker;
-  progress?: ProgressLogger;
-}
+export interface OrchestratorToolOptions extends WorkerRunOptions {}
 
-export function createOrchestratorToolDefinitions(
-  config: SwarmConfig,
-  opts: OrchestratorToolOptions,
-) {
-  const { costTracker, cycleTracker, progress } = opts;
-  const delegationResults: Map<string, AgentResult> = new Map();
-
-  const delegateTaskTool: AgentTool<any, any> = {
-    name: "delegate_task",
-    label: "Delegate",
-    description: "Delegate a task to a team lead who will spawn workers and return a report.",
+export function createOrchestratorToolDefinitions(config: SwarmConfig, opts: OrchestratorToolOptions) {
+  const runtime = opts.runtime ?? new RunContext(opts, config.maxConcurrentAgents, config.costBudget, opts.costTracker);
+  const results = new Map<string, AgentResult>();
+  let summary: string | undefined;
+  async function delegate(team: string, task: string, context?: string) {
+    runtime.check();
+    const selected = config.teams[team];
+    if (!selected) throw new Error(`Unknown team. Available: ${Object.keys(config.teams).join(", ")}`);
+    const result = await runTeamLead(selected.lead, task, context, config.defaults.workerModel, {
+      ...opts, runtime, workers: selected.workers, parentId: opts.executionId,
+    });
+    results.set(result.executionId!, result);
+    const report = `Team ${team} [${result.status}]:\n${result.output}`;
+    if (!result.success) throw new Error(report);
+    return text(report);
+  }
+  const tools: AgentTool<any, any>[] = [{
+    name: "delegate_task", label: "Delegate", description: `Delegate analysis to a configured team: ${Object.keys(config.teams).join(", ")}.`,
     parameters: Type.Object({
-      team: Type.String({ description: "Team: 'dev', 'product', 'marketing', 'ops', or 'gtm'" }),
-      task: Type.String({ description: "What the team should accomplish" }),
-      context: Type.Optional(Type.String({ description: "Additional context" })),
-      priority: Type.Optional(Type.String({ description: "p0/p1/p2/p3" })),
+      team: Type.String({ minLength: 1 }), task: Type.String({ minLength: 1 }),
+      context: Type.Optional(Type.String()), priority: Type.Optional(Type.String()),
     }),
-    execute: async (_id: string, args: { team: string; task: string; context?: string; priority?: string }) => {
-      const teamId = args.team as TeamId;
-      const teamConfig = config.teams[teamId];
-
-      let leadConfig = teamConfig?.lead;
-      if (!leadConfig) {
-        const role = getTeamLeadRole(teamId);
-        if (!role) return text(`Error: Team "${teamId}" not found. Available: ${Object.keys(config.teams).join(", ")}`);
-        leadConfig = teamLeadRoleToConfig(role, config.defaults.teamLeadModel);
-      }
-
-      if (costTracker.isOverBudget) return text(`Error: Budget exceeded`);
-
-      progress?.delegating("Orchestrator", leadConfig.name, teamId);
-      logger.info("orchestrator", "delegating_task", { team: teamId, task: args.task, priority: args.priority ?? "p2" });
-
-      const leadOpts: TeamLeadRunOptions = {
-        costTracker,
-        cycleTracker,
-        progress,
-        parentId: "orchestrator",
-      };
-
-      const result = await runTeamLead(leadConfig, args.task, args.context, config.defaults.workerModel, leadOpts);
-      delegationResults.set(teamId, result);
-
-      return text(
-        result.success
-          ? `Team ${teamId} (${leadConfig.name}) completed:\n${result.output}\n\n[Duration: ${result.duration}ms]`
-          : `Team ${teamId} (${leadConfig.name}) failed:\n${result.output}`,
-      );
+    execute: async (_id, params) => {
+      const args = params as { team: string; task: string; context?: string };
+      return delegate(args.team, args.task, args.context);
     },
-  };
-
-  const broadcastTool: AgentTool<any, any> = {
-    name: "broadcast",
-    label: "Broadcast",
-    description: "Send a task to multiple teams in parallel.",
+  }, {
+    name: "broadcast", label: "Broadcast", description: "Delegate a shared task to several configured teams concurrently.",
     parameters: Type.Object({
-      teams: Type.Array(Type.String(), { description: "List of team IDs" }),
-      task: Type.String({ description: "Task to broadcast" }),
-      context: Type.Optional(Type.String({ description: "Shared context" })),
+      teams: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, uniqueItems: true }),
+      task: Type.String({ minLength: 1 }), context: Type.Optional(Type.String()),
     }),
-    execute: async (_id: string, args: { teams: string[]; task: string; context?: string }) => {
-      if (costTracker.isOverBudget) return text(`Error: Budget exceeded`);
-
-      logger.info("orchestrator", "broadcasting", { teams: args.teams, task: args.task });
-
-      // Run teams with concurrency limit
-      const maxConcurrent = config.maxConcurrentAgents ?? 10;
-      type BroadcastResult = { team: string; error: string } | { team: string; result: AgentResult };
-      const results: BroadcastResult[] = [];
-      const teamIds = [...args.teams];
-
-      // Process in batches respecting maxConcurrentAgents
-      for (let i = 0; i < teamIds.length; i += maxConcurrent) {
-        const batch = teamIds.slice(i, i + maxConcurrent);
-        const batchResults = await Promise.all(batch.map(async (teamId: string): Promise<BroadcastResult> => {
-          if (costTracker.isOverBudget) return { team: teamId, error: "Budget exceeded" };
-
-          const tc = config.teams[teamId];
-          let lc = tc?.lead;
-          if (!lc) {
-            const role = getTeamLeadRole(teamId as TeamId);
-            if (!role) return { team: teamId, error: `Not found` };
-            lc = teamLeadRoleToConfig(role, config.defaults.teamLeadModel);
-          }
-          progress?.delegating("Orchestrator", lc.name, teamId);
-          const leadOpts: TeamLeadRunOptions = { costTracker, cycleTracker, progress, parentId: "orchestrator" };
-          const result = await runTeamLead(lc, args.task, args.context, config.defaults.workerModel, leadOpts);
-          delegationResults.set(teamId, result);
-          return { team: teamId, result };
-        }));
-        results.push(...batchResults);
-      }
-
-      const t = results.map((r) => {
-        if ("error" in r && !("result" in r)) return `[${r.team}] Error: ${(r as { team: string; error: string }).error}`;
-        const res = (r as { team: string; result: AgentResult }).result;
-        return `[${r.team}] ${res.success ? "OK" : "FAIL"}: ${res.output.slice(0, 300)}`;
-      }).join("\n\n---\n\n");
-      return text(t);
+    execute: async (_id, params) => {
+      const args = params as { teams: string[]; task: string; context?: string };
+      // Settle every branch before returning, retaining results even if another branch fails.
+      const replies = await Promise.allSettled(args.teams.map((team: string) => delegate(team, args.task, args.context)));
+      const report = replies.map(reply => reply.status === "fulfilled"
+        ? reply.value.content[0].text : String(reply.reason)).join("\n\n");
+      if (replies.some(reply => reply.status === "rejected")) throw new Error(report);
+      return text(report);
     },
-  };
-
-  const collectReportsTool: AgentTool<any, any> = {
-    name: "collect_reports",
-    label: "Reports",
-    description: "Retrieve all team reports from this cycle.",
+  }, {
+    name: "collect_reports", label: "Reports", description: "Read every delegation result, including repeated assignments.",
     parameters: Type.Object({}),
-    execute: async () => {
-      if (delegationResults.size === 0) return text("No delegations yet.");
-      const lines = Array.from(delegationResults.entries()).map(
-        ([team, r]) => `## ${team.toUpperCase()}\n${r.success ? "Complete" : "Failed"} (${r.duration}ms, $${r.cost.total.toFixed(4)})\n\n${r.output}`,
-      );
-      const totalCost = Array.from(delegationResults.values()).reduce((sum, r) => sum + r.cost.total, 0);
-      lines.push(`\n**Total cost across teams: $${totalCost.toFixed(4)}**`);
-      return text(lines.join("\n\n---\n\n"));
-    },
-  };
-
-  const finishCycleTool: AgentTool<any, any> = {
-    name: "finish_cycle",
-    label: "Finish",
-    description: "Signal the orchestration cycle is complete.",
+    execute: async () => text([...results.values()].map(r =>
+      `[${r.status}] ${r.agentId}: ${r.output}\nTeam estimate: $${r.teamCost?.toFixed(4)}`).join("\n\n") || "No delegations yet."),
+  }, {
+    name: "finish_cycle", label: "Finish", description: "Finish the cycle with a summary, including any failures or limitations.",
     parameters: Type.Object({
-      summary: Type.String({ description: "Executive summary" }),
-      nextSteps: Type.Optional(Type.String({ description: "Next steps" })),
+      summary: Type.String({ minLength: 1 }), nextSteps: Type.Optional(Type.String()),
     }),
-    execute: async (_id: string, args: { summary: string; nextSteps?: string }) => {
-      logger.info("orchestrator", "cycle_finished", { summary: args.summary, totalCost: costTracker.totalCost });
-      const budgetLine = config.costBudget
-        ? `\n**Budget:** $${costTracker.totalCost.toFixed(4)} / $${config.costBudget.toFixed(2)} (${costTracker.remaining !== undefined ? `$${costTracker.remaining.toFixed(4)} remaining` : "unlimited"})`
-        : `\n**Total cost:** $${costTracker.totalCost.toFixed(4)}`;
-      return text([
-        "# Cycle Complete",
-        `\n## Summary\n${args.summary}`,
-        budgetLine,
-        args.nextSteps ? `\n## Next Steps\n${args.nextSteps}` : "",
-      ].join("\n"));
+    execute: async (_id, params) => {
+      const args = params as { summary: string; nextSteps?: string };
+      summary = args.summary + (args.nextSteps ? `\n\nNext steps:\n${args.nextSteps}` : "");
+      return { ...text(summary!), terminate: true };
     },
-  };
-
-  return {
-    tools: [delegateTaskTool, broadcastTool, collectReportsTool, finishCycleTool],
-    getDelegationResults: () => new Map(delegationResults),
-  };
+  }];
+  return { tools, getDelegationResults: () => new Map(results), getSummary: () => summary };
 }

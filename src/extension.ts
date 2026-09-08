@@ -1,161 +1,123 @@
-/**
- * Pi extension entry point.
- *
- * Registers /swarm, /swarm-config, /swarm-status commands and the
- * swarm_delegate tool for use inside pi's interactive CLI.
- *
- * Load with: pi -e ./dist/extension.js
- */
-
-import { Type } from "@mariozechner/pi-ai";
-import type { KnownProvider, Model } from "@mariozechner/pi-ai";
-import { defineTool } from "@mariozechner/pi-coding-agent";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { runOrchestrationCycle } from "./orchestrator/orchestrator.js";
 import { createDefaultConfig } from "./config.js";
-import type { SwarmConfig, ModelConfig } from "./types.js";
-
-let cachedConfig: SwarmConfig | null = null;
-let lastCycleResult: string | null = null;
-
-/**
- * Build a ModelConfig from pi's current model.
- * Called at execution time (not import time) so it picks up
- * whatever model the user has selected via pi /model.
- */
-function modelFromPi(piModel: Model<any> | undefined): ModelConfig | undefined {
-  if (!piModel) return undefined;
-  return {
-    provider: piModel.provider as KnownProvider,
-    model: piModel.id,
-  };
-}
-
-/**
- * Get or create the swarm config, using pi's current model.
- */
-function getConfig(piModel: Model<any> | undefined): SwarmConfig {
-  const mc = modelFromPi(piModel);
-
-  // Rebuild config if model changed or first call
-  if (!cachedConfig || (mc && cachedConfig.defaults.orchestratorModel.model !== mc.model)) {
-    cachedConfig = createDefaultConfig("Pi Swarm", {
-      orchestratorModel: mc,
-      teamLeadModel: mc,
-      workerModel: mc,
-    });
-  }
-  return cachedConfig;
-}
+import type { CycleResult } from "./types.js";
+import { toolResult } from "./utils/tool-helpers.js";
 
 export default function piSwarmExtension(pi: ExtensionAPI): void {
-  // ----- Tool: swarm_delegate -----
-  pi.registerTool(
-    defineTool({
-      name: "swarm_delegate",
-      label: "Swarm Delegate",
-      description:
-        "Delegate a complex task to the pi-swarm multi-agent orchestration system. " +
-        "The CEO agent will decompose the task, delegate to team leads, who spawn specialist workers.",
-      parameters: Type.Object({
-        task: Type.String({ description: "The high-level task or directive to orchestrate" }),
-        context: Type.Optional(Type.String({ description: "Additional context or constraints" })),
-        budget: Type.Optional(Type.Number({ description: "Maximum cost budget in dollars" })),
-      }),
-      execute: async (_toolCallId, args, _signal, _onUpdate, ctx) => {
-        // ctx is the ExtensionContext — read pi's current model from it
-        const baseConfig = getConfig(ctx?.model);
-        // Create a copy to avoid mutating the cached config
-        const config = args.budget !== undefined
-          ? { ...baseConfig, costBudget: args.budget }
-          : baseConfig;
+  let active: { controller: AbortController; done: Promise<CycleResult> } | undefined;
+  let last: CycleResult | undefined;
+  let generation = 0;
 
-        const result = await runOrchestrationCycle(config, args.task, args.context);
-        lastCycleResult = JSON.stringify(result, null, 2);
+  function configFor(ctx: ExtensionContext) {
+    if (!ctx.model) throw new Error("Select an authenticated model with /model before starting a swarm.");
+    const model = { provider: ctx.model.provider, model: ctx.model.id, thinkingLevel: ctx.thinkingLevel ?? pi.getThinkingLevel() };
+    return createDefaultConfig("Pi Swarm", { orchestratorModel: model, teamLeadModel: model, workerModel: model });
+  }
+  function summary(result: CycleResult): string {
+    return `Swarm: ${result.status} · ${(result.duration / 1000).toFixed(1)}s · ${result.delegations.length} delegations · estimated $${result.totalCost.toFixed(4)}\n\n${result.companyStatus}`;
+  }
+  async function run(ctx: ExtensionContext, task: string, context?: string, budget?: number,
+    signal?: AbortSignal, update?: (message: string) => void): Promise<CycleResult> {
+    if (active) throw new Error("A swarm is already running. Use /swarm-cancel first.");
+    const config = configFor(ctx);
+    config.costBudget = budget;
+    const controller = new AbortController();
+    const currentGeneration = generation;
+    const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const onProgress = (message: string) => {
+      if (currentGeneration !== generation) return;
+      if (ctx.mode === "tui") {
+        ctx.ui.setStatus("swarm", message);
+        ctx.ui.setWidget("swarm", [message, "Use /swarm-cancel to stop."]);
+      }
+      update?.(message);
+    };
+    const done = runOrchestrationCycle(config, task, context, {
+      signal: combined, modelRegistry: ctx.modelRegistry, onProgress,
+      showProgress: false, showTree: false,
+    });
+    active = { controller, done };
+    try {
+      const result = await done;
+      if (currentGeneration === generation) last = result;
+      return result;
+    } finally {
+      active = undefined;
+      if (ctx.mode === "tui") {
+        ctx.ui.setStatus("swarm", undefined);
+        ctx.ui.setWidget("swarm", undefined);
+      }
+    }
+  }
+  async function cancel() {
+    const pending = active;
+    pending?.controller.abort();
+    await pending?.done.catch(() => undefined);
+  }
+  const reset = async () => { generation++; await cancel(); last = undefined; };
+  pi.on("session_before_switch", reset);
+  pi.on("session_before_fork", reset);
+  pi.on("session_before_tree", reset);
+  pi.on("session_shutdown", reset);
 
-        const summary = [
-          `# Orchestration Complete`,
-          ``,
-          `**Cycle ID:** ${result.cycleId}`,
-          `**Duration:** ${(result.duration / 1000).toFixed(1)}s`,
-          `**Teams Involved:** ${result.delegations.length}`,
-          `**Total Cost:** $${result.totalCost.toFixed(4)}`,
-          ``,
-          `## Result`,
-          result.companyStatus,
-        ].join("\n");
-
-        return {
-          content: [{ type: "text" as const, text: summary }],
-          details: undefined,
-        };
-      },
+  pi.registerTool({
+    name: "swarm_delegate", label: "Swarm Delegate",
+    description: "Delegate analysis and text generation to a specialist swarm. Workers cannot browse, edit files, or execute code.",
+    parameters: Type.Object({
+      task: Type.String({ minLength: 1 }), context: Type.Optional(Type.String()),
+      budget: Type.Optional(Type.Number({ minimum: 0 })),
     }),
-  );
-
-  // ----- Command: /swarm -----
+    execute: async (_id, args, signal, onUpdate, ctx) => {
+      const result = await run(ctx, args.task, args.context, args.budget, signal,
+        message => onUpdate?.(toolResult(message)));
+      if (result.status !== "completed") throw new Error(summary(result));
+      return { content: toolResult(summary(result)).content, details: result };
+    },
+  });
   pi.registerCommand("swarm", {
-    description: "Run a task through the pi-swarm multi-agent pipeline",
+    description: "Analyze a task with a specialist swarm",
     handler: async (args, ctx) => {
-      if (!args.trim()) {
-        ctx.ui.notify(
-          "Usage: /swarm <task description>  Example: /swarm Plan the Q2 product launch",
-          "info",
-        );
-        return;
-      }
-
-      // Read pi's current model from the command context
-      const config = getConfig(ctx.model);
-      ctx.ui.notify(`Swarm starting with ${config.defaults.orchestratorModel.model}...`, "info");
-
-      const result = await runOrchestrationCycle(config, args.trim());
-      lastCycleResult = JSON.stringify(result, null, 2);
-
-      pi.sendUserMessage(
-        `Swarm orchestration complete (${(result.duration / 1000).toFixed(1)}s, ${result.delegations.length} teams):\n\n${result.companyStatus}`,
-      );
+      if (!args.trim()) { ctx.ui.notify("Usage: /swarm <task>", "info"); return; }
+      const currentGeneration = generation;
+      const work = run(ctx, args.trim(), undefined, undefined, ctx.signal).then(async result => {
+        if (currentGeneration === generation) await pi.sendMessage({
+          customType: "swarm-result", content: summary(result), display: true, details: result,
+        }, { triggerTurn: false });
+      }).catch(error => {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      });
+      // Pi queues TUI input until command handlers return; keep cancel/status usable.
+      if (ctx.mode !== "tui") await work;
     },
   });
-
-  // ----- Command: /swarm-config -----
+  pi.registerCommand("swarm-cancel", {
+    description: "Cancel the active swarm and its workers",
+    handler: async (_args, ctx) => {
+      const running = !!active;
+      await cancel();
+      ctx.ui.notify(running ? "Swarm cancelled." : "No swarm is running.", "info");
+    },
+  });
   pi.registerCommand("swarm-config", {
-    description: "Show swarm configuration",
+    description: "Show the swarm's current model and teams",
     handler: async (_args, ctx) => {
-      const config = getConfig(ctx.model);
-      const teams = Object.entries(config.teams)
-        .map(([id, t]) => `  ${id}: ${t.lead.name} + ${t.workers.length} workers`)
-        .join("\n");
-
-      ctx.ui.notify(
-        `Swarm: ${config.name}\n` +
-        `Model: ${config.defaults.orchestratorModel.provider}/${config.defaults.orchestratorModel.model}\n` +
-        `Budget: ${config.costBudget ? `$${config.costBudget.toFixed(2)}` : "unlimited"}\n` +
-        `Teams:\n${teams}`,
-        "info",
-      );
+      try {
+        const config = configFor(ctx);
+        ctx.ui.notify([
+          `Model: ${config.orchestrator.model.provider}/${config.orchestrator.model.model}`,
+          `Thinking: ${config.orchestrator.model.thinkingLevel}`,
+          `Concurrent requests: ${config.maxConcurrentAgents}; budget: unlimited`,
+          ...Object.entries(config.teams).map(([id, t]) => `${id}: ${t.lead.name}, ${t.workers.length} workers`),
+        ].join("\n"), "info");
+      } catch (error) { ctx.ui.notify(String(error), "error"); }
     },
   });
-
-  // ----- Command: /swarm-status -----
   pi.registerCommand("swarm-status", {
-    description: "Show results from the last orchestration cycle",
+    description: "Show the active swarm or last result",
     handler: async (_args, ctx) => {
-      if (!lastCycleResult) {
-        ctx.ui.notify("No orchestration cycles have been run yet.", "info");
-        return;
-      }
-      try {
-        const parsed = JSON.parse(lastCycleResult);
-        ctx.ui.notify(
-          `Last cycle: ${parsed.cycleId}\n` +
-          `Duration: ${(parsed.duration / 1000).toFixed(1)}s\n` +
-          `Teams: ${parsed.delegations?.length ?? 0}`,
-          "info",
-        );
-      } catch {
-        ctx.ui.notify("Error parsing last result", "error");
-      }
+      ctx.ui.notify(active ? "Swarm running. Use /swarm-cancel to stop." : last ? summary(last) : "No swarm has run in this session.", "info");
     },
   });
 }

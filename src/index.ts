@@ -26,6 +26,7 @@ export type {
   SwarmConfig,
   AgentResult,
   CycleResult,
+  RunStatus,
   ToolCallRecord,
   Thread,
   RoutingRule,
@@ -79,6 +80,7 @@ export { resolveApiKey, envModelConfig } from "./env.js";
 // Agent factory
 export { createSwarmAgent, runOneShot, toAgentTools } from "./session.js";
 export type { SwarmAgentOptions } from "./session.js";
+export type { RunOptions } from "./runtime.js";
 
 // UI
 export { CycleTracker, ProgressLogger, renderTree, printTree } from "./ui/index.js";

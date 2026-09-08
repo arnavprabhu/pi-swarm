@@ -5,10 +5,10 @@
  * Shows the full team tree with 5 leads + workers.
  *
  * Usage:
- *   npx tsx examples/full-company.ts
+ *   node examples/full-company.ts
  */
 
-import { Swarm } from "../src/index.js";
+import { Swarm } from "../dist/index.js";
 
 const CYAN = "\x1b[36m";
 const BOLD = "\x1b[1m";
@@ -40,10 +40,10 @@ Each team should produce deliverables with timelines.`,
     "Series B startup, 50 employees, $10M ARR, B2B SaaS.",
   );
 
-  if (result.companyStatus && !result.companyStatus.startsWith("Orchestration")) {
+  if (result.companyStatus) {
     console.log(`\n${CYAN}${BOLD}--- CEO Summary ---${RESET}\n`);
     console.log(result.companyStatus);
   }
 }
 
-main().catch(console.error);
+main().catch(error => { console.error(error); process.exitCode = 1; });

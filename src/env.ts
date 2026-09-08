@@ -6,12 +6,12 @@
  */
 
 import { config } from "dotenv";
-import { getEnvApiKey } from "@mariozechner/pi-ai";
-import type { KnownProvider } from "@mariozechner/pi-ai";
+import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
+import type { KnownProvider } from "@earendil-works/pi-ai";
 import type { ModelConfig } from "./types.js";
 
 // Load .env file into process.env
-config();
+config({ quiet: true });
 
 /** The provider from .env. Must be set — no hardcoded default. */
 export const ENV_PROVIDER: string = process.env.PROVIDER ?? "";
@@ -35,9 +35,10 @@ export function envModelConfig(
   providerOverride?: string,
   modelOverride?: string,
 ): ModelConfig | undefined {
-  const provider = providerOverride ?? ENV_PROVIDER;
-  const model = modelOverride ?? ENV_MODEL;
+  const provider = providerOverride ?? process.env.PROVIDER;
+  const model = modelOverride ?? process.env.MODEL;
 
+  if (!!provider !== !!model) throw new Error("Set both PROVIDER and MODEL, or neither.");
   if (!provider || !model) {
     return undefined;
   }
@@ -47,4 +48,3 @@ export function envModelConfig(
     model,
   };
 }
-

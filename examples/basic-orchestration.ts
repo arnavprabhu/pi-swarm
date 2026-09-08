@@ -7,10 +7,10 @@
  * - CEO summary
  *
  * Usage:
- *   npx tsx examples/basic-orchestration.ts
+ *   node examples/basic-orchestration.ts
  */
 
-import { Swarm } from "../src/index.js";
+import { Swarm } from "../dist/index.js";
 
 const CYAN = "\x1b[36m";
 const BOLD = "\x1b[1m";
@@ -28,15 +28,15 @@ async function main() {
   console.log(`${DIM}Model: ${config.defaults.orchestratorModel.model}${RESET}`);
 
   const result = await swarm.run(
-    "Build a REST API endpoint that returns a paginated list of users. " +
+    "Draft code and a test plan for a REST API endpoint that returns a paginated list of users. " +
       "Include input validation, error handling, and unit tests.",
   );
 
   // Print CEO summary
-  if (result.companyStatus && !result.companyStatus.startsWith("Orchestration")) {
+  if (result.companyStatus) {
     console.log(`\n${CYAN}${BOLD}--- CEO Summary ---${RESET}\n`);
     console.log(result.companyStatus);
   }
 }
 
-main().catch(console.error);
+main().catch(error => { console.error(error); process.exitCode = 1; });

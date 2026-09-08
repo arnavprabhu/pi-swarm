@@ -1,118 +1,55 @@
-/**
- * Tools available to team-lead agents.
- */
-
-import { Type } from "@mariozechner/pi-ai";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { ModelConfig, AgentResult, TeamId } from "../types.js";
-import { runWorker } from "../worker/worker.js";
-import type { WorkerRunOptions } from "../worker/worker.js";
+import { Type } from "@earendil-works/pi-ai";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentConfig, ModelConfig, AgentResult, TeamId } from "../types.js";
+import { runWorker, type WorkerRunOptions } from "../worker/worker.js";
 import { getTeamWorkerRoles, workerRoleToConfig } from "../worker/roles.js";
-import { CostTracker } from "../utils/cost-tracker.js";
-import { logger } from "../utils/logger.js";
-import type { CycleTracker } from "../ui/tracker.js";
-import type { ProgressLogger } from "../ui/progress.js";
 import { toolResult as text } from "../utils/tool-helpers.js";
 
-export interface TeamLeadToolOptions {
-  costTracker: CostTracker;
-  cycleTracker?: CycleTracker;
-  progress?: ProgressLogger;
+export interface TeamLeadToolOptions extends WorkerRunOptions {
   leadId: string;
+  workers?: AgentConfig[];
+  workerResults?: AgentResult[];
+  onReport?: (report: string) => void;
 }
 
-/**
- * Create AgentTool[] for a team lead.
- */
 export function createTeamLeadToolDefinitions(
-  teamId: TeamId,
-  leadId: string,
-  workerModel: ModelConfig,
-  opts: TeamLeadToolOptions,
+  teamId: TeamId, leadId: string, workerModel: ModelConfig, opts: TeamLeadToolOptions,
 ): AgentTool<any, any>[] {
-  const { costTracker, cycleTracker, progress } = opts;
-  const workerResults: AgentResult[] = [];
-
-  const spawnWorkerTool: AgentTool<any, any> = {
-    name: "spawn_worker",
-    label: "Spawn Worker",
-    description: "Spawn an ephemeral worker agent. Choose the appropriate worker role for the task.",
+  const workers = opts.workers ?? getTeamWorkerRoles(teamId).map(role => workerRoleToConfig(role, workerModel));
+  const results = opts.workerResults ?? [];
+  return [{
+    name: "spawn_worker", label: "Spawn Worker",
+    description: "Ask a configured specialist to analyze a task and return text. Workers cannot access files, execute code, or browse.",
     parameters: Type.Object({
-      workerId: Type.String({ description: "Worker role ID (e.g., 'frontend-eng', 'backend-eng', 'qa-eng')" }),
-      task: Type.String({ description: "The specific task for the worker" }),
-      context: Type.Optional(Type.String({ description: "Additional context" })),
+      workerId: Type.String({ minLength: 1 }), task: Type.String({ minLength: 1 }),
+      context: Type.Optional(Type.String()),
     }),
-    execute: async (_id: string, args: { workerId: string; task: string; context?: string }) => {
-      const roles = getTeamWorkerRoles(teamId);
-      const role = roles.find((r) => r.id === args.workerId);
-
-      if (!role) {
-        const available = roles.map((r) => `${r.id} (${r.name})`).join(", ");
-        return text(`Error: Worker "${args.workerId}" not found. Available: ${available}`);
-      }
-
-      const config = workerRoleToConfig(role, workerModel);
-      progress?.spawning(leadId, role.name);
-      logger.info(leadId, "spawning_worker", { workerId: args.workerId, task: args.task });
-
-      const workerOpts: WorkerRunOptions = {
-        costTracker,
-        cycleTracker,
-        progress,
-        parentId: leadId,
-      };
-
-      const result = await runWorker(config, args.task, args.context, workerOpts);
-      workerResults.push(result);
-
-      return text(
-        result.success
-          ? `Worker ${role.name} completed:\n${result.output}`
-          : `Worker ${role.name} failed: ${result.output}`,
-      );
+    execute: async (_id, params) => {
+      const args = params as { workerId: string; task: string; context?: string };
+      opts.runtime?.check();
+      const worker = workers.find(w => w.id === args.workerId);
+      if (!worker) throw new Error(`Unknown worker. Available: ${workers.map(w => w.id).join(", ")}`);
+      const result = await runWorker(worker, args.task, args.context, { ...opts, executionId: undefined, parentId: leadId });
+      results.push(result);
+      if (!result.success) throw new Error(result.output);
+      return text(result.output);
     },
-  };
-
-  const listWorkersTool: AgentTool<any, any> = {
-    name: "list_workers",
-    label: "List Workers",
-    description: "List available worker roles for this team.",
+  }, {
+    name: "list_workers", label: "List Workers", description: "List this team's configured workers.",
     parameters: Type.Object({}),
-    execute: async () => {
-      const roles = getTeamWorkerRoles(teamId);
-      return text(roles.map((r) => `- ${r.id}: ${r.name} — ${r.role}`).join("\n"));
+    execute: async () => text(workers.map(w => `${w.id}: ${w.name} — ${w.role}`).join("\n")),
+  }, {
+    name: "report_to_orchestrator", label: "Report", description: "Finish this team's work with a report.",
+    parameters: Type.Object({ summary: Type.String({ minLength: 1 }), body: Type.String({ minLength: 1 }) }),
+    execute: async (_id, params) => {
+      const args = params as { summary: string; body: string };
+      const report = `${args.summary}\n\n${args.body}`;
+      opts.onReport?.(report);
+      return { ...text(report), terminate: true };
     },
-  };
-
-  const reportTool: AgentTool<any, any> = {
-    name: "report_to_orchestrator",
-    label: "Report",
-    description: "Send a structured report back to the orchestrator summarizing your team's work.",
-    parameters: Type.Object({
-      summary: Type.String({ description: "One-line summary" }),
-      body: Type.String({ description: "Detailed report" }),
-    }),
-    execute: async (_id: string, args: { summary: string; body: string }) => {
-      // Create a structured report message (the report content is returned
-      // as tool output, which the orchestrator sees in the agent's response)
-      logger.info(leadId, "report_sent", { summary: args.summary });
-      return text(`## Report from ${leadId}\n\n**Summary:** ${args.summary}\n\n${args.body}`);
-    },
-  };
-
-  const getResultsTool: AgentTool<any, any> = {
-    name: "get_worker_results",
-    label: "Results",
-    description: "Get results from all spawned workers.",
+  }, {
+    name: "get_worker_results", label: "Results", description: "Read all worker results.",
     parameters: Type.Object({}),
-    execute: async () => {
-      if (workerResults.length === 0) return text("No workers spawned yet.");
-      const t = workerResults
-        .map((r) => `[${r.success ? "OK" : "FAIL"}] ${r.agentId}: ${r.output.slice(0, 500)}${r.output.length > 500 ? "..." : ""}`)
-        .join("\n\n");
-      return text(t);
-    },
-  };
-
-  return [spawnWorkerTool, listWorkersTool, reportTool, getResultsTool];
+    execute: async () => text(results.length ? results.map(r => `[${r.status}] ${r.agentId}: ${r.output}`).join("\n\n") : "No workers spawned."),
+  }];
 }

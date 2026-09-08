@@ -5,11 +5,11 @@
  * Demonstrates that pi-swarm isn't limited to the built-in teams.
  *
  * Usage:
- *   npx tsx examples/custom-team.ts
+ *   node examples/custom-team.ts
  */
 
-import { Swarm, envModelConfig } from "../src/index.js";
-import type { SwarmConfig, TeamConfig } from "../src/types.js";
+import { Swarm, envModelConfig } from "../dist/index.js";
+import type { SwarmConfig, TeamConfig } from "../dist/types.js";
 
 const CYAN = "\x1b[36m";
 const BOLD = "\x1b[1m";
@@ -73,14 +73,15 @@ async function main() {
   console.log(`${DIM}Model: ${model.model}${RESET}`);
 
   const result = await swarm.run(
-    "Research the current state of AI-powered design tools and create a competitive " +
-      "analysis with recommendations for which tools our team should adopt.",
+    "Draft an evaluation framework for AI-powered design tools and a design brief. " +
+      "Base the analysis on these requirements: shared editing, accessible output, " +
+      "exportable assets, and predictable pricing. Identify facts we still need to verify.",
   );
 
-  if (result.companyStatus && !result.companyStatus.startsWith("Orchestration")) {
+  if (result.companyStatus) {
     console.log(`\n${CYAN}${BOLD}--- Studio Lead Summary ---${RESET}\n`);
     console.log(result.companyStatus);
   }
 }
 
-main().catch(console.error);
+main().catch(error => { console.error(error); process.exitCode = 1; });
